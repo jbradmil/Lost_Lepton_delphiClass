@@ -1,0 +1,16 @@
+universe = grid
+Executable = jobExecCondor_exp.sh
+Grid_Resource=condor cmssubmit-r1.t2.ucsd.edu glidein-collector.t2.ucsd.edu
++DESIRED_Sites="T2_US_UCSD,T2_US_Nebraska,T2_US_Wisconsin,T2_US_MIT"
++Owner = undefined
+transfer_executable=True
+Should_Transfer_Files = YES
+WhenToTransferOutput = ON_EXIT_OR_EVICT
+Transfer_Input_Files = MakeExpectation.C, ExpecMaker.C, ExpecMaker.h, LLTools.h, SearchBins.h
+Output = LOGDIR_$(Cluster).stdout
+Error = LOGDIR_$(Cluster).stderr
+Log = LOGDIR_$(Cluster).condor
+notification = Never
+x509userproxy = /tmp/x509up_u31151
+Arguments = CMSSWVER INFILE OUTDIR
+queue

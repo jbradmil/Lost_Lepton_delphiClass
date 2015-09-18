@@ -3,8 +3,8 @@
 #include <TFile.h>
 #include <TSelector.h>
 #include <TTree.h>
-#include <TH2F.h>
-#include <TH1F.h>
+#include <TH2D.h>
+#include <TH1D.h>
 #include <TProfile.h>
 #include "TVector2.h"
 #include <cmath>
@@ -16,722 +16,886 @@
 #include "LLTools.h"
 #include "THEff.h"
 
-void SaveClosure(TH1F* prediction, TH1F* expectation, TDirectory* Folder) // prediction durch expectation
+void SaveClosure(TH1D* prediction, TH1D* expectation, TDirectory* Folder) // prediction durch expectation
 {
-	TH1F* Closure = (TH1F*) prediction->Clone();
-	Closure->Divide(prediction,expectation,1,1,"B");
-	TString title = prediction->GetTitle();
-	title +="_closure";
-// 	title = "#mu & e Control-Sample Ratio in Search Bins; Search bins; #mu / e CS";
-	Closure->SetTitle(title);
- 	title = prediction->GetName();
- 	title+="_closure";
-	Closure->SetName(title);
-	Folder->cd();
-	Closure->Write();
+  TH1D* Closure = (TH1D*) prediction->Clone();
+  // JACK--I don't think we want binomial errors for a closure test
+  Closure->Divide(prediction,expectation,1,1,"");
+  TString title = prediction->GetTitle();
+  title +="_closure";
+  // 	title = "#mu & e Control-Sample Ratio in Search Bins; Search bins; #mu / e CS";
+  Closure->SetTitle(title);
+  title = prediction->GetName();
+  title+="_closure";
+  Closure->SetName(title);
+  Folder->cd();
+  Closure->Write();
 }
 
 void ResultPlot()
 {
-	//Reset ROOT and connect tree file
-	gROOT->Reset();
-	TFile *f = (TFile*)gROOT->GetListOfFiles()->FindObject("Expectation.root");
-	if (!f) {
-		f = new TFile("Expectation.root");
-	}
-	// output tree
-	TFile *outPutFile = new TFile("Closure.root","RECREATE"); 
-	outPutFile->cd();
-	TTree* OutPutTreeExp_ = new TTree("ResultExp","Result Lost-Lepton Tree for plotting tool");
-	TTree* OutPutTreePre_ = new TTree("ResultPre","Result Lost-Lepton Tree for plotting tool");
-	UShort_t Bin=0;
-	Float_t Weight_=0, PredictionWeight_=0; 
+
+  // General Settings
+  TString InputPath_Expectation("Expectation.root");
+  TString InputPath_Prediction("Prediction.root");
+  TString InputPath_Prediction_Data("Prediction_data.root"); // Use same path as above if pure MC prediction wanted
+  TString OutputPath_Closure("Closure.root");
+  TString OutputPath_Prediction("LLPrediction.root");
+
+  // Scale all MC weights by this factor
+  Double_t scaleFactorWeight = 3000; // only used for MC prediction! Not data tree!
+
+  // Prepare Code for Extrapolation Method
+  bool doExtrapolation = false; 
+
+
+  //Declaration of leaves types for both trees (Expectation/Prediction)
+  UShort_t         Bin;
+  Double_t          Weight;
+  Double_t          scaledWeight;
+  Double_t         HT;
+  Double_t         MHT;
+  Int_t            NJets;
+  Int_t            BTags;
+  
+  UShort_t        Expectation;
+  UShort_t        muAcc;
+  UShort_t        muReco;
+  UShort_t        muIso;
+  UShort_t        elecAcc;
+  UShort_t        elecReco;
+  UShort_t        elecIso;
+  Int_t           isoTracks;
+  UShort_t        ExpectationDiLep;
+  UShort_t        ExpectationReductionIsoTrack;
+
+  Float_t         MTW;
+  UShort_t        selectedIDIsoMuonsNum;
+  UShort_t        selectedIDIsoElectronsNum;
+  
+  Float_t         totalWeightDiLep;
+  Float_t         totalWeightDiLepIsoTrackReduced;
+  
+  Float_t         muIsoWeight;
+  Float_t         muRecoWeight;
+  Float_t         muAccWeight;
+
+  Float_t         elecAccWeight;
+  Float_t         elecRecoWeight;
+  Float_t         elecIsoWeight;
+
+  Float_t         totalStatUp;
+  Float_t         totalStatDown;
+  Float_t         totalSysUp;
+  Float_t         totalSysDown;
+  Float_t         totalUncUp;
+  Float_t         totalUncDown;
+
+
+
+  //closure test
+  TFile *outPutFile = new TFile(OutputPath_Closure,"RECREATE"); 
+  outPutFile->cd();
+
+  double totalExp=0, totalPre=0;
+  double totalExpError=0, totalPreError=0;
+  double totalPreMu=0, totalPreMuError=0;
+  double totalPreElec=0, totalPreElecError=0;
+  double totalExpIsoTrack=0, totalExpIsoTrackError=0;
+
+  double totalPreIsoTrack=0, totalPreIsoTrackError=0;
+  double totalPreIsoTrackMu=0, totalPreIsoTrackMuError=0;
+  double totalPreIsoTrackElec=0, totalPreIsoTrackElecError=0;
+  
+  double totalExpMuAcc=0, totalExpMuReco=0, totalExpMuIso=0;
+  
+  double totalPreMuAcc=0, totalPreMuReco=0, totalPreMuIso=0;
+  double totalPreMuMuAcc=0, totalPreMuMuReco=0, totalPreMuMuIso=0;
+  double totalPreMuElecAcc=0, totalPreMuElecReco=0, totalPreMuElecIso=0;
+  
+  
+  double totalExpElecAcc=0, totalExpElecReco=0, totalExpElecIso=0;
+  
+  double totalPreElecAcc=0, totalPreElecReco=0, totalPreElecIso=0;
+  double totalPreElecMuAcc=0, totalPreElecMuReco=0, totalPreElecMuIso=0;
+  double totalPreElecElecAcc=0, totalPreElecElecReco=0, totalPreElecElecIso=0;
 	
-	OutPutTreeExp_->Branch("Weight", &Weight_, "Weight/F");
-	OutPutTreePre_->Branch("Weight", &Weight_, "Weight/F");
-	OutPutTreePre_->Branch("totalWeightDiLep", &PredictionWeight_, "totalWeightDiLep/F");
-	OutPutTreeExp_->Branch("Bin",&Bin,"Bin/s");
-	OutPutTreePre_->Branch("Bin",&Bin,"Bin/s");
-	//
-	UShort_t muAcc_=0, muIso_=0, muReco_=0;
-	OutPutTreeExp_->Branch("muAcc",&muAcc_,"muAcc/s");
-	OutPutTreeExp_->Branch("muReco",&muReco_,"muReco/s");
-	OutPutTreeExp_->Branch("muIso",&muIso_,"muIso/s");
+  TH1D* ControlSampleMu_ = new TH1D("ControlSampleMu", "ControlSampleMu", 72, 1., 73.);
+  TH1D* ControlSampleElec_ = new TH1D("ControlSampleElec", "ControlSampleElec", 72, 1., 73.);
 	
-	UShort_t elecAcc_=0, elecIso_=0, elecReco_=0;
-	OutPutTreeExp_->Branch("elecAcc",&elecAcc_,"elecAcc/s");
-	OutPutTreeExp_->Branch("elecReco",&elecReco_,"elecReco/s");
-	OutPutTreeExp_->Branch("elecIso",&elecIso_,"elecIso/s");
-	//
-	Float_t muIsoWeight_=0, muRecoWeight_=0, muAccWeight_=0;
-	OutPutTreePre_->Branch("muIsoWeight", &muIsoWeight_, "muIsoWeight/F");
-	OutPutTreePre_->Branch("muRecoWeight", &muRecoWeight_, "muRecoWeight/F");
-	OutPutTreePre_->Branch("muAccWeight", &muAccWeight_, "muAccWeight/F");
+  TH1D* totalExpectation_ = new TH1D("TotalLostLeptonExpecation", "TotalLostLeptonExpecation", 72, 1., 73.);
+  TH1D* totalPrediction_ = new TH1D("TotalLostLeptonPrediction", "TotalLostLeptonPrediction", 72, 1., 73.);
+  TH1D* totalPredictionMu_ = new TH1D("TotalLostLeptonPredictionMu", "TotalLostLeptonPredictionMu", 72, 1., 73.);
+  TH1D* totalPredictionElec_ = new TH1D("TotalLostLeptonPredictionElec", "TotalLostLeptonPredictionElec", 72, 1., 73.);
 	
-	Float_t elecIsoWeight_=0, elecRecoWeight_=0, elecAccWeight_=0;
-	OutPutTreePre_->Branch("elecIsoWeight", &elecIsoWeight_, "elecIsoWeight/F");
-	OutPutTreePre_->Branch("elecRecoWeight", &elecRecoWeight_, "elecRecoWeight/F");
-	OutPutTreePre_->Branch("elecAccWeight", &elecAccWeight_, "elecAccWeight/F");
+  TH1D* totalExpectationIsoTrackReduction_ = new TH1D("TotalLostLeptonExpecationIsoTrackReduction", "TotalLostLeptonExpecationIsoTrackReduction", 72, 1., 73.);
+  TH1D* totalPredictionIsoTrackReduction_ = new TH1D("TotalLostLeptonPredictionIsoTrackReduction", "TotalLostLeptonPredictionIsoTrackReduction", 72, 1., 73.);
+  TH1D* totalPredictionMuIsoTrackReduction_ = new TH1D("TotalLostLeptonPredictionMuIsoTrackReduction", "TotalLostLeptonPredictionMuIsoTrackReduction", 72, 1., 73.);
+  TH1D* totalPredictionElecIsoTrackReduction_ = new TH1D("TotalLostLeptonPredictionElecIsoTrackReduction", "TotalLostLeptonPredictionElecIsoTrackReduction", 72, 1., 73.);
 	
-	UShort_t selectedIDIsoMuonsNum_=0, selectedIDIsoElectronsNum_=0;
-	OutPutTreePre_->Branch("selectedIDIsoMuonsNum",&selectedIDIsoMuonsNum_,"selectedIDIsoMuonsNum/s");
-	OutPutTreePre_->Branch("selectedIDIsoElectronsNum",&selectedIDIsoElectronsNum_,"selectedIDIsoElectronsNum/s");
+  // separted closure
+  TH1D* totalExpectationMuAcc_ = new TH1D("TotalLostLeptonExpecationMuAcc", "TotalLostLeptonExpecationMuAcc", 72, 1., 73.);
+  TH1D* totalPredictionMuCSMuAcc_ = new TH1D("TotalLostLeptonPredictionMuCSMuAcc", "TotalLostLeptonPredictionMuCSMuAcc", 72, 1., 73.);
+  TH1D* totalPredictionElecCSMuAcc_ = new TH1D("TotalLostLeptonPredictionElecCSMuAcc", "TotalLostLeptonPredictionElecCSMuAcc", 72, 1., 73.);
 	
-	TTree* LostLeptonExpectation = (TTree*) f->Get("LostLeptonExpectation");
+  TH1D* totalExpectationMuReco_ = new TH1D("TotalLostLeptonExpecationMuReco", "TotalLostLeptonExpecationMuReco", 72, 1., 73.);
+  TH1D* totalPredictionMuCSMuReco_ = new TH1D("TotalLostLeptonPredictionMuCSMuReco", "TotalLostLeptonPredictionMuCSMuReco", 72, 1., 73.);
+  TH1D* totalPredictionElecCSMuReco_ = new TH1D("TotalLostLeptonPredictionElecCSMuReco", "TotalLostLeptonPredictionElecCSMuReco", 72, 1., 73.);
+	
+  TH1D* totalExpectationMuIso_ = new TH1D("TotalLostLeptonExpecationMuIso", "TotalLostLeptonExpecationMuIso", 72, 1., 73.);
+  TH1D* totalPredictionMuCSMuIso_ = new TH1D("TotalLostLeptonPredictionMuCSMuIso", "TotalLostLeptonPredictionMuCSMuIso", 72, 1., 73.);
+  TH1D* totalPredictionElecCSMuIso_ = new TH1D("TotalLostLeptonPredictionElecCSMuIso", "TotalLostLeptonPredictionElecCSMuIso", 72, 1., 73.);	
+	
+  TH1D* totalExpectationElecAcc_ = new TH1D("TotalLostLeptonExpecationElecAcc", "TotalLostLeptonExpecationElecAcc", 72, 1., 73.);
+  TH1D* totalPredictionMuCSElecAcc_ = new TH1D("TotalLostLeptonPredictionMuCSElecAcc", "TotalLostLeptonPredictionMuCSElecAcc", 72, 1., 73.);
+  TH1D* totalPredictionElecCSElecAcc_ = new TH1D("TotalLostLeptonPredictionElecCSElecAcc", "TotalLostLeptonPredictionElecCSElecAcc", 72, 1., 73.);
+	
+  TH1D* totalExpectationElecReco_ = new TH1D("TotalLostLeptonExpecationElecReco", "TotalLostLeptonExpecationElecReco", 72, 1., 73.);
+  TH1D* totalPredictionMuCSElecReco_ = new TH1D("TotalLostLeptonPredictionMuCSElecReco", "TotalLostLeptonPredictionMuCSElecReco", 72, 1., 73.);
+  TH1D* totalPredictionElecCSElecReco_ = new TH1D("TotalLostLeptonPredictionElecCSElecReco", "TotalLostLeptonPredictionElecCSElecReco", 72, 1., 73.);
+	
+  TH1D* totalExpectationElecIso_ = new TH1D("TotalLostLeptonExpecationElecIso", "TotalLostLeptonExpecationElecIso", 72, 1., 73.);
+  TH1D* totalPredictionMuCSElecIso_ = new TH1D("TotalLostLeptonPredictionMuCSElecIso", "TotalLostLeptonPredictionMuCSElecIso", 72, 1., 73.);
+  TH1D* totalPredictionElecCSElecIso_ = new TH1D("TotalLostLeptonPredictionElecCSElecIso", "TotalLostLeptonPredictionElecCSElecIso", 72, 1., 73.);
+
+
+
+  // Define histrograms to do totalPrediction per SearchBin
+  TH1D* totalExp_LL_ = new TH1D("totalExp_LL","totalExp_LL", 72, 1, 73);
+
+  TH1D* totalPred_LL_ = new TH1D("totalPred_LL","totalPred_LL", 72, 1, 73);
+  TH1D* totalPredStatUp_LL_ = new TH1D("totalPredStatUp_LL","totalPredStatUp_LL", 72, 1, 73);
+  TH1D* totalPredStatDown_LL_ = new TH1D("totalPredStatDown_LL","totalPredStatDown_LL", 72, 1, 73);
+  TH1D* totalPredSysUp_LL_ = new TH1D("totalPredSysUp_LL","totalPredSysUp_LL", 72, 1, 73);
+  TH1D* totalPredSysDown_LL_ = new TH1D("totalPredSysDown_LL","totalPredSysDown_LL", 72, 1, 73);
+
+  TH1D* totalCS_LL_ = new TH1D("totalCS_LL","totalCS_LL", 72, 1, 73);
+  TH1D* nEvtsCS_LL_ = new TH1D("nEvtsCS_LL","nEvtsCS_LL", 72, 1, 73);
+
+  TProfile* avgWeight_LL_ = new TProfile("avgWeight_LL","avgWeight_LL", 72, 1, 73);
+  TProfile* avgWeightStatUp_LL_ = new TProfile("avgWeightStatUp_LL","avgWeightStatUp_LL", 72, 1, 73);
+  TProfile* avgWeightStatDown_LL_ = new TProfile("avgWeightStatDown_LL","avgWeightStatDown_LL", 72, 1, 73);
+  TProfile* avgWeightSysUp_LL_ = new TProfile("avgWeightSysUp_LL","avgWeightSysUp_LL", 72, 1, 73);
+  TProfile* avgWeightSysDown_LL_ = new TProfile("avgWeightSysDown_LL","avgWeightSysDown_LL", 72, 1, 73);
+
+  totalPred_LL_->Sumw2();
+  totalPredStatUp_LL_->Sumw2();
+  totalPredStatDown_LL_->Sumw2();
+  totalPredSysUp_LL_->Sumw2();
+  totalPredSysDown_LL_->Sumw2();
+
+  totalCS_LL_->Sumw2();
+
+  avgWeight_LL_->Sumw2();
+  avgWeightStatUp_LL_->Sumw2();
+  avgWeightStatDown_LL_->Sumw2();
+  avgWeightSysUp_LL_->Sumw2();
+  avgWeightSysDown_LL_->Sumw2();
+
+  // Define histrograms to do totalPrediction per SearchBin (MC)
+  TH1D* totalExp_LL_MC_ = new TH1D("totalExp_LL_MC","totalExp_LL_MC", 72, 1, 73);
+
+  TH1D* totalPred_LL_MC_ = new TH1D("totalPred_LL_MC","totalPred_LL_MC", 72, 1, 73);
+  TH1D* totalPredStatUp_LL_MC_ = new TH1D("totalPredStatUp_LL_MC","totalPredStatUp_LL_MC", 72, 1, 73);
+  TH1D* totalPredStatDown_LL_MC_ = new TH1D("totalPredStatDown_LL_MC","totalPredStatDown_LL_MC", 72, 1, 73);
+  TH1D* totalPredSysUp_LL_MC_ = new TH1D("totalPredSysUp_LL_MC","totalPredSysUp_LL_MC", 72, 1, 73);
+  TH1D* totalPredSysDown_LL_MC_ = new TH1D("totalPredSysDown_LL_MC","totalPredSysDown_LL_MC", 72, 1, 73);
+
+  TH1D* totalCS_LL_MC_ = new TH1D("totalCS_LL_MC","totalCS_LL_MC", 72, 1, 73);
+  TH1D* nEvtsCS_LL_MC_ = new TH1D("nEvtsCS_LL_MC","nEvtsCS_LL_MC", 72, 1, 73);
+
+  TProfile* avgWeight_LL_MC_ = new TProfile("avgWeight_LL_MC","avgWeight_LL_MC", 72, 1, 73);
+  TProfile* avgWeightStatUp_LL_MC_ = new TProfile("avgWeightStatUp_LL_MC","avgWeightStatUp_LL_MC", 72, 1, 73);
+  TProfile* avgWeightStatDown_LL_MC_ = new TProfile("avgWeightStatDown_LL_MC","avgWeightStatDown_LL_MC", 72, 1, 73);
+  TProfile* avgWeightSysUp_LL_MC_ = new TProfile("avgWeightSysUp_LL_MC","avgWeightSysUp_LL_MC", 72, 1, 73);
+  TProfile* avgWeightSysDown_LL_MC_ = new TProfile("avgWeightSysDown_LL_MC","avgWeightSysDown_LL_MC", 72, 1, 73);
+
+  totalPred_LL_MC_->Sumw2();
+  totalPredStatUp_LL_MC_->Sumw2();
+  totalPredStatDown_LL_MC_->Sumw2();
+  totalPredSysUp_LL_MC_->Sumw2();
+  totalPredSysDown_LL_MC_->Sumw2();
+
+  totalCS_LL_MC_->Sumw2();
+
+  avgWeight_LL_MC_->Sumw2();
+  avgWeightStatUp_LL_MC_->Sumw2();
+  avgWeightStatDown_LL_MC_->Sumw2();
+  avgWeightSysUp_LL_MC_->Sumw2();
+  avgWeightSysDown_LL_MC_->Sumw2();
+
 
 	
-	SearchBinEventCount * ControlSampleMu_ = new SearchBinEventCount("ControlSampleMu");
-	SearchBinEventCount * ControlSampleElec_ = new SearchBinEventCount("ControlSampleElec");
-	
-	SearchBinEventCount * totalExpectation_ = new SearchBinEventCount("TotalLostLeptonExpecation");
-	SearchBinEventCount * totalPrediction_ = new SearchBinEventCount("TotalLostLeptonPrediction");
-	SearchBinEventCount * totalPredictionMu_ = new SearchBinEventCount("TotalLostLeptonPredictionMu");
-	SearchBinEventCount * totalPredictionElec_ = new SearchBinEventCount("TotalLostLeptonPredictionElec");
-	
-	SearchBinEventCount * totalExpectationIsoTrackReduction_ = new SearchBinEventCount("TotalLostLeptonExpecationIsoTrackReduction");
-	SearchBinEventCount * totalPredictionIsoTrackReduction_ = new SearchBinEventCount("TotalLostLeptonPredictionIsoTrackReduction");
-	SearchBinEventCount * totalPredictionMuIsoTrackReduction_ = new SearchBinEventCount("TotalLostLeptonPredictionMuIsoTrackReduction");
-	SearchBinEventCount * totalPredictionElecIsoTrackReduction_ = new SearchBinEventCount("TotalLostLeptonPredictionElecIsoTrackReduction");
-	
-	// separted closure
-	SearchBinEventCount * totalExpectationMuAcc_ = new SearchBinEventCount("TotalLostLeptonExpecationMuAcc");
-	SearchBinEventCount * totalPredictionMuCSMuAcc_ = new SearchBinEventCount("TotalLostLeptonPredictionMuCSMuAcc");
-	SearchBinEventCount * totalPredictionElecCSMuAcc_ = new SearchBinEventCount("TotalLostLeptonPredictionElecCSMuAcc");
-	
-	SearchBinEventCount * totalExpectationMuReco_ = new SearchBinEventCount("TotalLostLeptonExpecationMuReco");
-	SearchBinEventCount * totalPredictionMuCSMuReco_ = new SearchBinEventCount("TotalLostLeptonPredictionMuCSMuReco");
-	SearchBinEventCount * totalPredictionElecCSMuReco_ = new SearchBinEventCount("TotalLostLeptonPredictionElecCSMuReco");
-	
-	SearchBinEventCount * totalExpectationMuIso_ = new SearchBinEventCount("TotalLostLeptonExpecationMuIso");
-	SearchBinEventCount * totalPredictionMuCSMuIso_ = new SearchBinEventCount("TotalLostLeptonPredictionMuCSMuIso");
-	SearchBinEventCount * totalPredictionElecCSMuIso_ = new SearchBinEventCount("TotalLostLeptonPredictionElecCSMuIso");
-	
-	
-	
-	SearchBinEventCount * totalExpectationElecAcc_ = new SearchBinEventCount("TotalLostLeptonExpecationElecAcc");
-	SearchBinEventCount * totalPredictionMuCSElecAcc_ = new SearchBinEventCount("TotalLostLeptonPredictionMuCSElecAcc");
-	SearchBinEventCount * totalPredictionElecCSElecAcc_ = new SearchBinEventCount("TotalLostLeptonPredictionElecCSElecAcc");
-	
-	SearchBinEventCount * totalExpectationElecReco_ = new SearchBinEventCount("TotalLostLeptonExpecationElecReco");
-	SearchBinEventCount * totalPredictionMuCSElecReco_ = new SearchBinEventCount("TotalLostLeptonPredictionMuCSElecReco");
-	SearchBinEventCount * totalPredictionElecCSElecReco_ = new SearchBinEventCount("TotalLostLeptonPredictionElecCSElecReco");
-	
-	SearchBinEventCount * totalExpectationElecIso_ = new SearchBinEventCount("TotalLostLeptonExpecationElecIso");
-	SearchBinEventCount * totalPredictionMuCSElecIso_ = new SearchBinEventCount("TotalLostLeptonPredictionMuCSElecIso");
-	SearchBinEventCount * totalPredictionElecCSElecIso_ = new SearchBinEventCount("TotalLostLeptonPredictionElecCSElecIso");
-	
-	double totalExp=0, totalPre=0;
-	double totalExpError=0, totalPreError=0;
-	double totalPreMu=0, totalPreMuError=0;
-	double totalPreElec=0, totalPreElecError=0;
-	double totalExpIsoTrack=0, totalExpIsoTrackError=0;
+  //Expectation Tree
+  gROOT->Reset();
+  // TFile *fExp = (TFile*)gROOT->GetListOfFiles()->FindObject(InputPath_Expectation);
+  // if (!fExp) {
+  //   fExp = new TFile(InputPath_Expectation);
+  // }
+  
+  // TTree* LostLeptonExpectation = (TTree*) fExp->Get("LostLeptonExpectation");
+  TChain* LostLeptonExpectation = new TChain("LostLeptonExpectation");
+  LostLeptonExpectation->Add("/hadoop/cms/store/user/jbradmil/trees_911/Expectation/13TeV_25ns20PU.TTJets_HT-2500toInf_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonExpectation->Add("/hadoop/cms/store/user/jbradmil/trees_911/Expectation/13TeV_25ns20PU.TTJets_HT-1200to2500_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonExpectation->Add("/hadoop/cms/store/user/jbradmil/trees_911/Expectation/13TeV_25ns20PU.TTJets_HT-800to1200_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonExpectation->Add("/hadoop/cms/store/user/jbradmil/trees_911/Expectation/13TeV_25ns20PU.TTJets_HT-600to800_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonExpectation->Add("/hadoop/cms/store/user/jbradmil/trees_911/Expectation/13TeV_25ns20PU.TTJets_SingleLeptFromT_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonExpectation->Add("/hadoop/cms/store/user/jbradmil/trees_911/Expectation/13TeV_25ns20PU.TTJets_SingleLeptFromT_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9_ext1-v1_MINIAODSIM/*root");
+  LostLeptonExpectation->Add("/hadoop/cms/store/user/jbradmil/trees_911/Expectation/13TeV_25ns20PU.TTJets_SingleLeptFromTbar_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9_ext1-v1_MINIAODSIM/*root");
+  LostLeptonExpectation->Add("/hadoop/cms/store/user/jbradmil/trees_911/Expectation/13TeV_25ns20PU.TTJets_SingleLeptFromTbar_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v2_MINIAODSIM/*root");
+  LostLeptonExpectation->Add("/hadoop/cms/store/user/jbradmil/trees_911/Expectation/13TeV_25ns20PU.TTJets_DiLept_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9_ext1-v1_MINIAODSIM/*root");
+  LostLeptonExpectation->Add("/hadoop/cms/store/user/jbradmil/trees_911/Expectation/13TeV_25ns20PU.TTJets_DiLept_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v2_MINIAODSIM/*root");
 
-	double totalPreIsoTrack=0, totalPreIsoTrackError=0;
-	double totalPreIsoTrackMu=0, totalPreIsoTrackMuError=0;
-	double totalPreIsoTrackElec=0, totalPreIsoTrackElecError=0;
 	
-	double totalExpMuAcc=0, totalExpMuReco=0, totalExpMuIso=0;
-	
-	double totalPreMuAcc=0, totalPreMuReco=0, totalPreMuIso=0;
-	double totalPreMuMuAcc=0, totalPreMuMuReco=0, totalPreMuMuIso=0;
-	double totalPreMuElecAcc=0, totalPreMuElecReco=0, totalPreMuElecIso=0;
-	
-	
-	double totalExpElecAcc=0, totalExpElecReco=0, totalExpElecIso=0;
-	
-	double totalPreElecAcc=0, totalPreElecReco=0, totalPreElecIso=0;
-	double totalPreElecMuAcc=0, totalPreElecMuReco=0, totalPreElecMuIso=0;
-	double totalPreElecElecAcc=0, totalPreElecElecReco=0, totalPreElecElecIso=0;
-	
-	//Declaration of leaves types
-	Float_t         HT;
-	Float_t         MHT;
-	UShort_t        NJets;
-	UShort_t        BTags;
-	Float_t         Weight;
-	
-	UShort_t        Expectation;
-	UShort_t        muAcc;
-	UShort_t        muReco;
-	UShort_t        muIso;
-	UShort_t        elecAcc;
-	UShort_t        elecReco;
-	UShort_t        elecIso;
-	UShort_t        isoTracks;
-	UShort_t        ExpectationDiLep;
-	UShort_t        ExpectationReductionIsoTrack;
-	
-	// Set branch addresses.
-	LostLeptonExpectation->SetBranchAddress("HT",&HT);
-	LostLeptonExpectation->SetBranchAddress("MHT",&MHT);
-	LostLeptonExpectation->SetBranchAddress("NJets",&NJets);
-	LostLeptonExpectation->SetBranchAddress("BTags",&BTags);
-	LostLeptonExpectation->SetBranchAddress("Weight",&Weight);
-	
-	LostLeptonExpectation->SetBranchAddress("Expectation",&Expectation);
-	LostLeptonExpectation->SetBranchAddress("ExpectationReductionIsoTrack",&ExpectationReductionIsoTrack);
-	LostLeptonExpectation->SetBranchAddress("muAcc",&muAcc);
-	LostLeptonExpectation->SetBranchAddress("muReco",&muReco);
-	LostLeptonExpectation->SetBranchAddress("muIso",&muIso);
-	
-	LostLeptonExpectation->SetBranchAddress("elecAcc",&elecAcc);
-	LostLeptonExpectation->SetBranchAddress("elecReco",&elecReco);
-	LostLeptonExpectation->SetBranchAddress("elecIso",&elecIso);
-	
-	LostLeptonExpectation->SetBranchAddress("isoTracks",&isoTracks);
-	LostLeptonExpectation->SetBranchAddress("ExpectationDiLep",&ExpectationDiLep);
-	
-	
-	Long64_t nentries = LostLeptonExpectation->GetEntries();
-	
-	SearchBins *SearchBins_ = new SearchBins();
-	
-	std::cout<<"Loop on Expectation"<<std::endl;
+  // Set branch addresses.
+  LostLeptonExpectation->SetBranchStatus("*",0);
+  LostLeptonExpectation->SetBranchStatus("HT",1);
+  LostLeptonExpectation->SetBranchStatus("MHT",1);
+  LostLeptonExpectation->SetBranchStatus("NJets",1);
+  LostLeptonExpectation->SetBranchStatus("BTags",1);
+  LostLeptonExpectation->SetBranchStatus("Weight",1);
+  LostLeptonExpectation->SetBranchStatus("Bin",1);
+  LostLeptonExpectation->SetBranchStatus("Expectation",1);
+  LostLeptonExpectation->SetBranchStatus("ExpectationReductionIsoTrack",1);
+  LostLeptonExpectation->SetBranchStatus("muAcc",1);
+  LostLeptonExpectation->SetBranchStatus("muReco",1);
+  LostLeptonExpectation->SetBranchStatus("muIso",1);
+  LostLeptonExpectation->SetBranchStatus("elecAcc",1);
+  LostLeptonExpectation->SetBranchStatus("elecReco",1);
+  LostLeptonExpectation->SetBranchStatus("elecIso",1);
+  LostLeptonExpectation->SetBranchStatus("isoTracks",1);
+  LostLeptonExpectation->SetBranchStatus("ExpectationDiLep",1);
 
-	Long64_t nbytes = 0;
-	   for (Long64_t i=0; i<nentries;i++) {
-		      nbytes += LostLeptonExpectation->GetEntry(i);
-					// total expectation
-					if(NJets<3.6) continue;
-					if(Expectation==1 && NJets>3.1)
-					{
-						totalExpectation_->Fill(HT,MHT,NJets,BTags,Weight);
-						totalExp+=Weight;
-						totalExpError+= Weight*Weight;
-						Bin = SearchBins_->GetBinNumber(HT,MHT,NJets,BTags);
-						Weight_=Weight;
-						muAcc_=muAcc; muReco_=muReco; muIso_=muIso; elecAcc_=elecAcc; elecReco_=elecReco; elecIso_=elecIso;
-						OutPutTreeExp_->Fill();
-					}
-					if(Expectation==1 && ExpectationReductionIsoTrack==0 && NJets>3.1)
-					{
-						totalExpectationIsoTrackReduction_->Fill(HT,MHT,NJets,BTags,Weight);
-						totalExpIsoTrack+=Weight;
-						totalExpIsoTrackError+= Weight*Weight;
-					}
-					if(muAcc==0)
-					{
-						totalExpectationMuAcc_->Fill(HT,MHT,NJets,BTags,Weight);
-						totalExpMuAcc+=Weight;
-					}
-					if(muReco==0)
-					{
-						totalExpectationMuReco_->Fill(HT,MHT,NJets,BTags,Weight);
-						totalExpMuReco+=Weight;
-					}
-					if(muIso==0)
-					{
-						totalExpectationMuIso_->Fill(HT,MHT,NJets,BTags,Weight);
-						totalExpMuIso+=Weight;
-					}
+
+  LostLeptonExpectation->SetBranchAddress("HT",&HT);
+  LostLeptonExpectation->SetBranchAddress("MHT",&MHT);
+  LostLeptonExpectation->SetBranchAddress("NJets",&NJets);
+  LostLeptonExpectation->SetBranchAddress("BTags",&BTags);
+  LostLeptonExpectation->SetBranchAddress("Weight",&Weight);
+  LostLeptonExpectation->SetBranchAddress("Bin",&Bin);
+	
+  LostLeptonExpectation->SetBranchAddress("Expectation",&Expectation);
+  LostLeptonExpectation->SetBranchAddress("ExpectationReductionIsoTrack",&ExpectationReductionIsoTrack);
+
+  LostLeptonExpectation->SetBranchAddress("muAcc",&muAcc);
+  LostLeptonExpectation->SetBranchAddress("muReco",&muReco);
+  LostLeptonExpectation->SetBranchAddress("muIso",&muIso);
+	
+  LostLeptonExpectation->SetBranchAddress("elecAcc",&elecAcc);
+  LostLeptonExpectation->SetBranchAddress("elecReco",&elecReco);
+  LostLeptonExpectation->SetBranchAddress("elecIso",&elecIso);
+	
+  LostLeptonExpectation->SetBranchAddress("isoTracks",&isoTracks);
+  LostLeptonExpectation->SetBranchAddress("ExpectationDiLep",&ExpectationDiLep);
+	
+
+  std::cout<<"Loop on Expectation"<<std::endl;
+  Long64_t nentries = LostLeptonExpectation->GetEntries();  
+
+  Long64_t nbytes = 0;
+  for (Long64_t i=0; i<nentries;i++) {
+    nbytes += LostLeptonExpectation->GetEntry(i);
+    // total expectation
+    if(doExtrapolation || Bin > 900) continue;
+
+    scaledWeight = Weight * scaleFactorWeight;
+
+    if(Expectation==1 && NJets>3.1)
+      {
+    	totalExpectation_->Fill(Bin, scaledWeight);
+    	totalExp+=scaledWeight;
+    	totalExpError+= scaledWeight*scaledWeight;
+      }
+    if(Expectation==1 && ExpectationReductionIsoTrack==0 && NJets>3.1)
+      {
+    	totalExpectationIsoTrackReduction_->Fill(Bin, scaledWeight);
+    	totalExpIsoTrack+=scaledWeight;
+    	totalExpIsoTrackError+= scaledWeight*scaledWeight;
+	totalExp_LL_->Fill(Bin, scaledWeight);
+      }
+    if(muAcc==0)
+      {
+    	totalExpectationMuAcc_->Fill(Bin, scaledWeight);
+    	totalExpMuAcc+=scaledWeight;
+      }
+    if(muReco==0)
+      {
+    	totalExpectationMuReco_->Fill(Bin, scaledWeight);
+    	totalExpMuReco+=scaledWeight;
+      }
+    if(muIso==0)
+      {
+    	totalExpectationMuIso_->Fill(Bin, scaledWeight);
+    	totalExpMuIso+=scaledWeight;
+      }
 					
-					if(elecAcc==0)
-					{
-						totalExpectationElecAcc_->Fill(HT,MHT,NJets,BTags,Weight);
-						totalExpElecAcc+=Weight;
-					}
-					if(elecReco==0)
-					{
-						totalExpectationElecReco_->Fill(HT,MHT,NJets,BTags,Weight);
-						totalExpElecReco+=Weight;
-					}
-					if(elecIso==0)
-					{
-						totalExpectationElecIso_->Fill(HT,MHT,NJets,BTags,Weight);
-						totalExpElecIso+=Weight;
-					}
-	   }
+    if(elecAcc==0)
+      {
+    	totalExpectationElecAcc_->Fill(Bin, scaledWeight);
+    	totalExpElecAcc+=scaledWeight;
+      }
+    if(elecReco==0)
+      {
+    	totalExpectationElecReco_->Fill(Bin, scaledWeight);
+    	totalExpElecReco+=scaledWeight;
+      }
+    if(elecIso==0)
+      {
+    	totalExpectationElecIso_->Fill(Bin, scaledWeight);
+    	totalExpElecIso+=scaledWeight;
+      }
+  }
 	
-	std::cout<<"Finished"<<std::endl;
+  std::cout<<"Finished"<<std::endl;
+  delete LostLeptonExpectation;
+  //Prediction MC Tree
+  gROOT->Reset();
+  // TFile *fPreMC = (TFile*)gROOT->GetListOfFiles()->FindObject(InputPath_Prediction);
+  // if (!fPreMC) {
+  //   fPreMC = new TFile(InputPath_Prediction);
+  // }
+  // TTree* LostLeptonPrediction = (TTree*) fPreMC->Get("LostLeptonPrediction");
+  TChain* LostLeptonPrediction = new TChain("LostLeptonPrediction");
+  LostLeptonPrediction->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_HT-2500toInf_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonPrediction->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_HT-1200to2500_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonPrediction->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_HT-800to1200_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonPrediction->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_HT-600to800_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonPrediction->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_SingleLeptFromT_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonPrediction->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_SingleLeptFromT_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9_ext1-v1_MINIAODSIM/*root");
+  LostLeptonPrediction->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_SingleLeptFromTbar_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9_ext1-v1_MINIAODSIM/*root");
+  LostLeptonPrediction->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_SingleLeptFromTbar_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v2_MINIAODSIM/*root");
+  LostLeptonPrediction->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_DiLept_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9_ext1-v1_MINIAODSIM/*root");
+  LostLeptonPrediction->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_DiLept_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v2_MINIAODSIM/*root");
 
-	  // loop on prediction
-	gROOT->Reset();
-	TFile *f1 = (TFile*)gROOT->GetListOfFiles()->FindObject("Prediction.root");
-	if (!f1) {
-		f1 = new TFile("Prediction.root");
-	}
-	TTree* LostLeptonPrediction = (TTree*) f1->Get("LostLeptonPrediction");
+  LostLeptonPrediction->SetBranchStatus("*",0);
+  LostLeptonPrediction->SetBranchStatus("HT",1);
+  LostLeptonPrediction->SetBranchStatus("MHT",1);
+  LostLeptonPrediction->SetBranchStatus("NJets",1);
+  LostLeptonPrediction->SetBranchStatus("BTags",1);
+  LostLeptonPrediction->SetBranchStatus("Weight",1);
+  LostLeptonPrediction->SetBranchStatus("Bin",1);
+  LostLeptonPrediction->SetBranchStatus("MTW",1);
+  LostLeptonPrediction->SetBranchStatus("selectedIDIsoMuonsNum",1);
+  LostLeptonPrediction->SetBranchStatus("selectedIDIsoElectronsNum",1);
+  LostLeptonPrediction->SetBranchStatus("totalWeightDiLep",1);
+  LostLeptonPrediction->SetBranchStatus("totalWeightDiLepIsoTrackReduced",1);
+  LostLeptonPrediction->SetBranchStatus("muIsoWeight",1);
+  LostLeptonPrediction->SetBranchStatus("muRecoWeight",1);
+  LostLeptonPrediction->SetBranchStatus("muAccWeight",1);
+  LostLeptonPrediction->SetBranchStatus("elecAccWeight",1);
+  LostLeptonPrediction->SetBranchStatus("elecRecoWeight",1);
+  LostLeptonPrediction->SetBranchStatus("elecIsoWeight",1);
+  LostLeptonPrediction->SetBranchStatus("totalStatUp",1);
+  LostLeptonPrediction->SetBranchStatus("totalSysUp",1);
+  LostLeptonPrediction->SetBranchStatus("totalUncUp",1);
+  LostLeptonPrediction->SetBranchStatus("totalStatDown",1);
+  LostLeptonPrediction->SetBranchStatus("totalSysDown",1);
+  LostLeptonPrediction->SetBranchStatus("totalUncDown",1);
+  
+  LostLeptonPrediction->SetBranchAddress("HT",&HT);
+  LostLeptonPrediction->SetBranchAddress("MHT",&MHT);
+  LostLeptonPrediction->SetBranchAddress("NJets",&NJets);
+  LostLeptonPrediction->SetBranchAddress("BTags",&BTags);
+  LostLeptonPrediction->SetBranchAddress("Weight",&Weight);
+  LostLeptonPrediction->SetBranchAddress("Bin",&Bin);
+  
+  LostLeptonPrediction->SetBranchAddress("MTW",&MTW);
+  LostLeptonPrediction->SetBranchAddress("selectedIDIsoMuonsNum",&selectedIDIsoMuonsNum);
+  LostLeptonPrediction->SetBranchAddress("selectedIDIsoElectronsNum",&selectedIDIsoElectronsNum);
+  LostLeptonPrediction->SetBranchAddress("totalWeightDiLep",&totalWeightDiLep);
+  LostLeptonPrediction->SetBranchAddress("totalWeightDiLepIsoTrackReduced",&totalWeightDiLepIsoTrackReduced);
+  
+  LostLeptonPrediction->SetBranchAddress("muIsoWeight",&muIsoWeight);
+  LostLeptonPrediction->SetBranchAddress("muRecoWeight",&muRecoWeight);
+  LostLeptonPrediction->SetBranchAddress("muAccWeight",&muAccWeight);
+  
+  LostLeptonPrediction->SetBranchAddress("elecAccWeight",&elecAccWeight);
+  LostLeptonPrediction->SetBranchAddress("elecRecoWeight",&elecRecoWeight);
+  LostLeptonPrediction->SetBranchAddress("elecIsoWeight",&elecIsoWeight);
+
+  LostLeptonPrediction->SetBranchAddress("totalStatUp", &totalStatUp);
+  LostLeptonPrediction->SetBranchAddress("totalSysUp", &totalSysUp);
+  LostLeptonPrediction->SetBranchAddress("totalUncUp", &totalUncUp);
+
+  LostLeptonPrediction->SetBranchAddress("totalStatDown", &totalStatDown);
+  LostLeptonPrediction->SetBranchAddress("totalSysDown", &totalSysDown);
+  LostLeptonPrediction->SetBranchAddress("totalUncDown", &totalUncDown);
+
+
+  std::cout<<"Loop on Prediction (MC)"<<std::endl;
+  
+  nentries = LostLeptonPrediction->GetEntries();
+  nbytes = 0;
+  for (Long64_t i=0; i<nentries;i++) {
+    nbytes += LostLeptonPrediction->GetEntry(i);
+    
+    if(doExtrapolation || Bin > 900) continue;
+    if(MTW>100)continue;
+    if(selectedIDIsoMuonsNum+selectedIDIsoElectronsNum!=1)continue;
+
+    scaledWeight = Weight * scaleFactorWeight;
+
+    totalPred_LL_MC_->Fill(Bin, totalWeightDiLepIsoTrackReduced*scaleFactorWeight/2);
+    totalPredStatUp_LL_MC_->Fill(Bin, totalStatUp*scaleFactorWeight/2);
+    totalPredStatDown_LL_MC_->Fill(Bin, totalStatDown*scaleFactorWeight/2);
+    totalPredSysUp_LL_MC_->Fill(Bin, totalSysUp*scaleFactorWeight/2);
+    totalPredSysDown_LL_MC_->Fill(Bin, totalSysDown*scaleFactorWeight/2);
+
+    totalCS_LL_MC_->Fill(Bin, scaledWeight);
+    nEvtsCS_LL_MC_->Fill(Bin);
+
+    avgWeight_LL_MC_->Fill(Bin, totalWeightDiLepIsoTrackReduced/Weight/2);
+    avgWeightStatUp_LL_MC_->Fill(Bin, totalStatUp/Weight/2);
+    avgWeightStatDown_LL_MC_->Fill(Bin, totalStatDown/Weight/2);
+    avgWeightSysUp_LL_MC_->Fill(Bin, totalSysUp/Weight/2);
+    avgWeightSysDown_LL_MC_->Fill(Bin, totalSysDown/Weight/2);
+  }
+
+  std::cout<<"Finished"<<std::endl;
+  delete LostLeptonPrediction;
+
+  //Prediction Data Tree
+  gROOT->Reset();
+  // TFile *fPre = (TFile*)gROOT->GetListOfFiles()->FindObject(InputPath_Prediction_Data);
+  // if (!fPre) {
+  //   fPre = new TFile(InputPath_Prediction_Data);
+  // }
+  // TTree* LostLeptonPredictionData = (TTree*) fPre->Get("LostLeptonPrediction");
+  TChain* LostLeptonPredictionData = new TChain("LostLeptonPrediction");
+  LostLeptonPredictionData->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_HT-2500toInf_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonPredictionData->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_HT-1200to2500_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonPredictionData->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_HT-800to1200_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonPredictionData->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_HT-600to800_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonPredictionData->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_SingleLeptFromT_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v1_MINIAODSIM/*root");
+  LostLeptonPredictionData->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_SingleLeptFromT_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9_ext1-v1_MINIAODSIM/*root");
+  LostLeptonPredictionData->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_SingleLeptFromTbar_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9_ext1-v1_MINIAODSIM/*root");
+  LostLeptonPredictionData->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_SingleLeptFromTbar_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v2_MINIAODSIM/*root");
+  LostLeptonPredictionData->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_DiLept_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9_ext1-v1_MINIAODSIM/*root");
+  LostLeptonPredictionData->Add("/hadoop/cms/store/user/jbradmil/trees_911/Prediction/13TeV_25ns20PU.TTJets_DiLept_TuneCUETP8M1_13TeV-madgraphMLM-pythia8_RunIISpring15DR74-Asympt25ns_MCRUN2_74_V9-v2_MINIAODSIM/*root");
+
+
+  LostLeptonPredictionData->SetBranchStatus("*",0);
+  LostLeptonPredictionData->SetBranchStatus("HT",1);
+  LostLeptonPredictionData->SetBranchStatus("MHT",1);
+  LostLeptonPredictionData->SetBranchStatus("NJets",1);
+  LostLeptonPredictionData->SetBranchStatus("BTags",1);
+  LostLeptonPredictionData->SetBranchStatus("Weight",1);
+  LostLeptonPredictionData->SetBranchStatus("Bin",1);
+  LostLeptonPredictionData->SetBranchStatus("MTW",1);
+  LostLeptonPredictionData->SetBranchStatus("selectedIDIsoMuonsNum",1);
+  LostLeptonPredictionData->SetBranchStatus("selectedIDIsoElectronsNum",1);
+  LostLeptonPredictionData->SetBranchStatus("totalWeightDiLep",1);
+  LostLeptonPredictionData->SetBranchStatus("totalWeightDiLepIsoTrackReduced",1);
+  LostLeptonPredictionData->SetBranchStatus("muIsoWeight",1);
+  LostLeptonPredictionData->SetBranchStatus("muRecoWeight",1);
+  LostLeptonPredictionData->SetBranchStatus("muAccWeight",1);
+  LostLeptonPredictionData->SetBranchStatus("elecAccWeight",1);
+  LostLeptonPredictionData->SetBranchStatus("elecRecoWeight",1);
+  LostLeptonPredictionData->SetBranchStatus("elecIsoWeight",1);
+  LostLeptonPredictionData->SetBranchStatus("totalStatUp",1);
+  LostLeptonPredictionData->SetBranchStatus("totalSysUp",1);
+  LostLeptonPredictionData->SetBranchStatus("totalUncUp",1);
+  LostLeptonPredictionData->SetBranchStatus("totalStatDown",1);
+  LostLeptonPredictionData->SetBranchStatus("totalSysDown",1);
+  LostLeptonPredictionData->SetBranchStatus("totalUncDown",1);
+  
+  LostLeptonPredictionData->SetBranchAddress("HT",&HT);
+  LostLeptonPredictionData->SetBranchAddress("MHT",&MHT);
+  LostLeptonPredictionData->SetBranchAddress("NJets",&NJets);
+  LostLeptonPredictionData->SetBranchAddress("BTags",&BTags);
+  LostLeptonPredictionData->SetBranchAddress("Weight",&Weight);
+  LostLeptonPredictionData->SetBranchAddress("Bin",&Bin);
 	
-	Float_t         MTW;
-	UShort_t        selectedIDIsoMuonsNum;
-	UShort_t        selectedIDIsoElectronsNum;
+  LostLeptonPredictionData->SetBranchAddress("MTW",&MTW);
+  LostLeptonPredictionData->SetBranchAddress("selectedIDIsoMuonsNum",&selectedIDIsoMuonsNum);
+  LostLeptonPredictionData->SetBranchAddress("selectedIDIsoElectronsNum",&selectedIDIsoElectronsNum);
+  LostLeptonPredictionData->SetBranchAddress("totalWeightDiLep",&totalWeightDiLep);
+  LostLeptonPredictionData->SetBranchAddress("totalWeightDiLepIsoTrackReduced",&totalWeightDiLepIsoTrackReduced);
 	
-	Float_t         totalWeightDiLep;
-	Float_t         totalWeightDiLepIsoTrackReduced;
+  LostLeptonPredictionData->SetBranchAddress("muIsoWeight",&muIsoWeight);
+  LostLeptonPredictionData->SetBranchAddress("muRecoWeight",&muRecoWeight);
+  LostLeptonPredictionData->SetBranchAddress("muAccWeight",&muAccWeight);
 	
-	Float_t         muIsoWeight;
-	Float_t         muRecoWeight;
-	Float_t         muAccWeight;
+  LostLeptonPredictionData->SetBranchAddress("elecAccWeight",&elecAccWeight);
+  LostLeptonPredictionData->SetBranchAddress("elecRecoWeight",&elecRecoWeight);
+  LostLeptonPredictionData->SetBranchAddress("elecIsoWeight",&elecIsoWeight);
 
-	Float_t         elecAccWeight;
-	Float_t         elecRecoWeight;
-	Float_t         elecIsoWeight;
-	
-	
-	
-	LostLeptonPrediction->SetBranchAddress("HT",&HT);
-	LostLeptonPrediction->SetBranchAddress("MHT",&MHT);
-	LostLeptonPrediction->SetBranchAddress("NJets",&NJets);
-	LostLeptonPrediction->SetBranchAddress("BTags",&BTags);
-	LostLeptonPrediction->SetBranchAddress("Weight",&Weight);
-	
-	LostLeptonPrediction->SetBranchAddress("MTW",&MTW);
-	LostLeptonPrediction->SetBranchAddress("selectedIDIsoMuonsNum",&selectedIDIsoMuonsNum);
-	LostLeptonPrediction->SetBranchAddress("selectedIDIsoElectronsNum",&selectedIDIsoElectronsNum);
-	LostLeptonPrediction->SetBranchAddress("totalWeightDiLep",&totalWeightDiLep);
-	LostLeptonPrediction->SetBranchAddress("totalWeightDiLepIsoTrackReduced",&totalWeightDiLepIsoTrackReduced);
-	
-	LostLeptonPrediction->SetBranchAddress("muIsoWeight",&muIsoWeight);
-	LostLeptonPrediction->SetBranchAddress("muRecoWeight",&muRecoWeight);
-	LostLeptonPrediction->SetBranchAddress("muAccWeight",&muAccWeight);
-	
-	LostLeptonPrediction->SetBranchAddress("elecAccWeight",&elecAccWeight);
-	LostLeptonPrediction->SetBranchAddress("elecRecoWeight",&elecRecoWeight);
-	LostLeptonPrediction->SetBranchAddress("elecIsoWeight",&elecIsoWeight);
+  LostLeptonPredictionData->SetBranchAddress("totalStatUp", &totalStatUp);
+  LostLeptonPredictionData->SetBranchAddress("totalSysUp", &totalSysUp);
+  LostLeptonPredictionData->SetBranchAddress("totalUncUp", &totalUncUp);
 
-	TDirectory *EffInputFolder =   (TDirectory*)f1->Get("MeanWeight");
-	TProfile *CombinedMeanWeight_ = (TProfile*) EffInputFolder->Get("CombinedMeanWeight");
-	TProfile *MuMeanWeight_ = (TProfile*) EffInputFolder->Get("MuMeanWeight");
-	TProfile *ElecMeanWeight_ = (TProfile*) EffInputFolder->Get("ElecMeanWeight");
+  LostLeptonPredictionData->SetBranchAddress("totalStatDown", &totalStatDown);
+  LostLeptonPredictionData->SetBranchAddress("totalSysDown", &totalSysDown);
+  LostLeptonPredictionData->SetBranchAddress("totalUncDown", &totalUncDown);
 
-	TH1 *MuWeightPerBin_[72];
-	TH1 *ElecWeightPerBin_[72];
-	TH1 *CombinedWeightPerBin_[72];
-	TDirectory *EffperBinInputFolder =   (TDirectory*)f1->Get("WeightPerBin");
-	for(int b = 0; b <72; b++){
-		MuWeightPerBin_[b] = (TH1D*) EffperBinInputFolder->Get(TString("MuWeightPerBin_")+TString(to_string(b+1)));
-		ElecWeightPerBin_[b] = (TH1D*) EffperBinInputFolder->Get(TString("ElecWeightPerBin_")+TString(to_string(b+1)));
-		CombinedWeightPerBin_[b] = (TH1D*) EffperBinInputFolder->Get(TString("CombinedWeightPerBin_")+TString(to_string(b+1)));
-	}
+  /*
+    TDirectory *EffInputFolder =   (TDirectory*)fPre->Get("MeanWeight");
+    TProfile *CombinedMeanWeight_ = (TProfile*) EffInputFolder->Get("CombinedMeanWeight");
+    TProfile *MuMeanWeight_ = (TProfile*) EffInputFolder->Get("MuMeanWeight");
+    TProfile *ElecMeanWeight_ = (TProfile*) EffInputFolder->Get("ElecMeanWeight");
 
-	std::cout<<"Loop on Prediction"<<std::endl;
+    TH1 *MuWeightPerBin_[72];
+    TH1 *ElecWeightPerBin_[72];
+    TH1 *CombinedWeightPerBin_[72];
+    TDirectory *EffperBinInputFolder =   (TDirectory*)fPre->Get("WeightPerBin");
+    for(int b = 0; b <72; b++){
+    MuWeightPerBin_[b] = (TH1D*) EffperBinInputFolder->Get(TString("MuWeightPerBin_")+TString(to_string(b+1)));
+    ElecWeightPerBin_[b] = (TH1D*) EffperBinInputFolder->Get(TString("ElecWeightPerBin_")+TString(to_string(b+1)));
+    CombinedWeightPerBin_[b] = (TH1D*) EffperBinInputFolder->Get(TString("CombinedWeightPerBin_")+TString(to_string(b+1)));
+    }
+  */
+  std::cout<<"Loop on Prediction (Data)"<<std::endl;
 	
-	nentries = LostLeptonPrediction->GetEntries();
-	nbytes = 0;
-	for (Long64_t i=0; i<nentries;i++) {
-		nbytes += LostLeptonPrediction->GetEntry(i);
-		// total expectation
-		if(MTW>100 || NJets<3.7)continue;
-		Bin = SearchBins_->GetBinNumber(HT,MHT,NJets,BTags);
-		Weight_=Weight;
-		selectedIDIsoMuonsNum_=selectedIDIsoMuonsNum;
-		selectedIDIsoElectronsNum_=selectedIDIsoElectronsNum;
-		if(selectedIDIsoMuonsNum+selectedIDIsoElectronsNum!=1)continue;
-		if(selectedIDIsoMuonsNum==1 && selectedIDIsoElectronsNum==0)
-		{
-			ControlSampleMu_->Fill(HT,MHT,NJets,BTags,Weight);
-			
-			totalPrediction_->Fill(HT,MHT,NJets,BTags,totalWeightDiLep/2);
-			totalPredictionMu_->Fill(HT,MHT,NJets,BTags,totalWeightDiLep);
-			totalPre+=totalWeightDiLep;
-			totalPreError+= totalWeightDiLep*totalWeightDiLep;
-			totalPreMu+=totalWeightDiLep;
-			totalPreMuError+= totalWeightDiLep*totalWeightDiLep;
-			// isotrackveto applied
-			totalPredictionIsoTrackReduction_->Fill(HT,MHT,NJets,BTags,totalWeightDiLepIsoTrackReduced/2);
-			totalPredictionMuIsoTrackReduction_->Fill(HT,MHT,NJets,BTags,totalWeightDiLepIsoTrackReduced);
-			totalPreIsoTrack+=totalWeightDiLepIsoTrackReduced;
-			totalPreIsoTrackError+=totalWeightDiLepIsoTrackReduced*totalWeightDiLepIsoTrackReduced;
-			totalPreIsoTrackMu+=totalWeightDiLepIsoTrackReduced;
-			totalPreIsoTrackMuError+=totalWeightDiLepIsoTrackReduced*totalWeightDiLepIsoTrackReduced;
+  nentries = LostLeptonPredictionData->GetEntries();
+  nbytes = 0;
+  double scaleMC = 1.0;
+  scaleFactorWeight = 1.0;
+  for (Long64_t i=0; i<nentries;i++) {
+    nbytes += LostLeptonPredictionData->GetEntry(i);
+    
+    if(doExtrapolation || Bin > 900) continue;
+    if(MTW>100)continue;
+    if(selectedIDIsoMuonsNum+selectedIDIsoElectronsNum!=1)continue;
 
-			// separted closure
-			totalPredictionMuCSMuAcc_->Fill(HT,MHT,NJets,BTags,muAccWeight);
-			totalPredictionMuCSMuReco_->Fill(HT,MHT,NJets,BTags,muRecoWeight);
-			totalPredictionMuCSMuIso_->Fill(HT,MHT,NJets,BTags,muIsoWeight);
-			totalPreMuAcc+=muAccWeight/2;
-			totalPreMuReco+=muRecoWeight/2;
-			totalPreMuIso+=muIsoWeight/2;
-			totalPreMuMuAcc+=muAccWeight;
-			totalPreMuMuReco+=muRecoWeight;
-			totalPreMuMuIso+=muIsoWeight;
-			
-			totalPredictionMuCSElecAcc_->Fill(HT,MHT,NJets,BTags,elecAccWeight);
-			totalPredictionMuCSElecReco_->Fill(HT,MHT,NJets,BTags,elecRecoWeight);
-			totalPredictionMuCSElecIso_->Fill(HT,MHT,NJets,BTags,elecIsoWeight);
-			totalPreElecAcc+=elecAccWeight/2;
-			totalPreElecReco+=elecRecoWeight/2;
-			totalPreElecIso+=elecIsoWeight/2;
-			totalPreMuElecAcc+=elecAccWeight;
-			totalPreMuElecReco+=elecRecoWeight;
-			totalPreMuElecIso+=elecIsoWeight;
+    scaledWeight = Weight * scaleFactorWeight;
 
-			muIsoWeight_=muIsoWeight; muRecoWeight_=muRecoWeight; muAccWeight_=muAccWeight;  elecIsoWeight_=elecIsoWeight; elecRecoWeight_=elecRecoWeight; elecAccWeight_=elecAccWeight; 
-			PredictionWeight_= totalWeightDiLep;
-			OutPutTreePre_->Fill();
-		}
-		if(selectedIDIsoMuonsNum==0 && selectedIDIsoElectronsNum==1)
-		{
-			ControlSampleElec_->Fill(HT,MHT,NJets,BTags,Weight);
-			
-			totalPrediction_->Fill(HT,MHT,NJets,BTags,totalWeightDiLep/2);
-			totalPredictionElec_->Fill(HT,MHT,NJets,BTags,totalWeightDiLep);
-			totalPre+=totalWeightDiLep;
-			totalPreError+= totalWeightDiLep*totalWeightDiLep;
-			totalPreElec+=totalWeightDiLep;
-			totalPreElecError+= totalWeightDiLep*totalWeightDiLep;
-			// isotrackveto applied
-			totalPredictionIsoTrackReduction_->Fill(HT,MHT,NJets,BTags,totalWeightDiLepIsoTrackReduced/2);
-			totalPredictionElecIsoTrackReduction_->Fill(HT,MHT,NJets,BTags,totalWeightDiLepIsoTrackReduced);
-			totalPreIsoTrack+=totalWeightDiLepIsoTrackReduced;
-			totalPreIsoTrackError+=totalWeightDiLepIsoTrackReduced*totalWeightDiLepIsoTrackReduced;
-			totalPreIsoTrackElec+=totalWeightDiLepIsoTrackReduced;
-			totalPreIsoTrackElecError+=totalWeightDiLepIsoTrackReduced*totalWeightDiLepIsoTrackReduced;
-			// separted closure
-			totalPredictionElecCSMuAcc_->Fill(HT,MHT,NJets,BTags,muAccWeight);
-			totalPredictionElecCSMuReco_->Fill(HT,MHT,NJets,BTags,muRecoWeight);
-			totalPredictionElecCSMuIso_->Fill(HT,MHT,NJets,BTags,muIsoWeight);
-			totalPreMuAcc+=muAccWeight/2;
-			totalPreMuReco+=muRecoWeight/2;
-			totalPreMuIso+=muIsoWeight/2;
-			totalPreElecMuAcc+=muAccWeight;
-			totalPreElecMuReco+=muRecoWeight;
-			totalPreElecMuIso+=muIsoWeight;
-			
-			totalPredictionElecCSElecAcc_->Fill(HT,MHT,NJets,BTags,elecAccWeight);
-			totalPredictionElecCSElecReco_->Fill(HT,MHT,NJets,BTags,elecRecoWeight);
-			totalPredictionElecCSElecIso_->Fill(HT,MHT,NJets,BTags,elecIsoWeight);
-			totalPreElecAcc+=elecAccWeight/2;
-			totalPreElecReco+=elecRecoWeight/2;
-			totalPreElecIso+=elecIsoWeight/2;
-			totalPreElecElecAcc+=elecAccWeight;
-			totalPreElecElecReco+=elecRecoWeight;
-			totalPreElecElecIso+=elecIsoWeight;
+    if(InputPath_Prediction_Data != InputPath_Prediction) scaleMC = Weight;
 
-			PredictionWeight_= totalWeightDiLep;
-			OutPutTreePre_->Fill();
-		}
-	}
+    totalPred_LL_->Fill(Bin, totalWeightDiLepIsoTrackReduced*scaleFactorWeight/2/scaleMC);
+    totalPredStatUp_LL_->Fill(Bin, totalStatUp*scaleFactorWeight/2/scaleMC);
+    totalPredStatDown_LL_->Fill(Bin, totalStatDown*scaleFactorWeight/2/scaleMC);
+    totalPredSysUp_LL_->Fill(Bin, totalSysUp*scaleFactorWeight/2/scaleMC);
+    totalPredSysDown_LL_->Fill(Bin, totalSysDown*scaleFactorWeight/2/scaleMC);
 
-	std::cout<<"Finished"<<std::endl;
-	
-	TH1F* expectationTH1 = (TH1F*) totalExpectation_->getFullTH1F();
-	TH1F* predictionTH1 = (TH1F*) totalPrediction_->getFullTH1F();
-	TH1F* FullClosure = (TH1F*) expectationTH1->Clone();
-	FullClosure->Divide(predictionTH1,expectationTH1,1,1,"B");
-	FullClosure->SetName("LostLeptonClosure");
-	FullClosure->SetTitle("Closure of lost-lepton method");
-	
-	TH1F* predictionTH1Mu = (TH1F*) totalPredictionMu_->getFullTH1F();
-	TH1F* FullClosureMu = (TH1F*) expectationTH1->Clone();
-	FullClosureMu->Divide(predictionTH1Mu,expectationTH1,1,1,"B");
-	FullClosureMu->SetName("LostLeptonClosureMuCS");
-	FullClosureMu->SetTitle("Closure of lost-lepton method #mu control-sample");
-	
-	TH1F* predictionTH1Elec = (TH1F*) totalPredictionElec_->getFullTH1F();
-	TH1F* FullClosureElec = (TH1F*) expectationTH1->Clone();
-	FullClosureElec->Divide(predictionTH1Elec,expectationTH1,1,1,"B");
-	FullClosureElec->SetName("LostLeptonClosureElecCS");
-	FullClosureElec->SetTitle("Closure of lost-lepton method elec control-sample");
+    totalCS_LL_->Fill(Bin, scaledWeight/scaleMC);
+    nEvtsCS_LL_->Fill(Bin);
 
-	std::cout<<"--------------------------------------------------------------------------------------------------------------------------\n";
-	std::cout<<"\n Muon and Electron CS:"<<std::endl;
-	std::cout<<"TotalExpectationIsoTrack: "<<totalExpIsoTrack<<" +- " << sqrt(totalExpIsoTrackError)<<"\n TotalPredictionIsoTrack: "<<totalPreIsoTrack/2<<" +- "<<sqrt(totalPreIsoTrackError)/2<<std::endl;
-	std::cout<<"TotalExpectation: "<<totalExp<<" +- " << sqrt(totalExpError)<<"\n TotalPrediction: "<<totalPre/2<<" +- "<<sqrt(totalPreError)/2<<std::endl;
-	std::cout<<"MuAccExp: "<<totalExpMuAcc<<"\n MuAccPre: "<<totalPreMuAcc<<std::endl;
-	std::cout<<"MuRecoExp: "<<totalExpMuReco<<"\n MuRecoPre: "<<totalPreMuReco<<std::endl;
-	std::cout<<"MuIsoExp: "<<totalExpMuIso<<"\n MuIsoPre: "<<totalPreMuIso<<std::endl;
-	std::cout<<"ElecAccExp: "<<totalExpElecAcc<<"\n ElecAccPre: "<<totalPreElecAcc<<std::endl;
-	std::cout<<"ElecRecoExp: "<<totalExpElecReco<<"\n ElecRecoPre: "<<totalPreElecReco<<std::endl;
-	std::cout<<"ElecIsoExp: "<<totalExpElecIso<<"\n ElecIsoPre: "<<totalPreElecIso<<std::endl;
-	std::cout<<"--------------------------------------------------------------------------------------------------------------------------\n";
+    avgWeight_LL_->Fill(Bin, totalWeightDiLepIsoTrackReduced/Weight/2);
+    avgWeightStatUp_LL_->Fill(Bin, totalStatUp/Weight/2);
+    avgWeightStatDown_LL_->Fill(Bin, totalStatDown/Weight/2);
+    avgWeightSysUp_LL_->Fill(Bin, totalSysUp/Weight/2);
+    avgWeightSysDown_LL_->Fill(Bin, totalSysDown/Weight/2);
 
-	std::cout<<"\n Muon CS only:"<<std::endl;
-	std::cout<<"TotalExpectationIsoTrack: "<<totalExpIsoTrack<<" +- " << sqrt(totalExpIsoTrackError)<<"\n TotalPredictionIsoTrack: "<<totalPreIsoTrackMu<<" +- "<<sqrt(totalPreIsoTrackMuError)<<std::endl;
-	std::cout<<"TotalExpectation: "<<totalExp<<" +- " << sqrt(totalExpError)<<"\n TotalPrediction: "<<totalPreMu<<" +- "<<sqrt(totalPreMuError)<<std::endl;	
-	std::cout<<"MuAccExp: "<<totalExpMuAcc<<"\n MuAccPre: "<<totalPreMuMuAcc<<std::endl;
-	std::cout<<"MuRecoExp: "<<totalExpMuReco<<"\n MuRecoPre: "<<totalPreMuMuReco<<std::endl;
-	std::cout<<"MuIsoExp: "<<totalExpMuIso<<"\n MuIsoPre: "<<totalPreMuMuIso<<std::endl;
-	std::cout<<"ElecAccExp: "<<totalExpElecAcc<<"\n ElecAccPre: "<<totalPreMuElecAcc<<std::endl;
-	std::cout<<"ElecRecoExp: "<<totalExpElecReco<<"\n ElecRecoPre: "<<totalPreMuElecReco<<std::endl;
-	std::cout<<"ElecIsoExp: "<<totalExpElecIso<<"\n ElecIsoPre: "<<totalPreMuElecIso<<std::endl;
-	std::cout<<"--------------------------------------------------------------------------------------------------------------------------\n";
+    if(selectedIDIsoMuonsNum==1 && selectedIDIsoElectronsNum==0){
 
-	std::cout<<"\n Elec CS only:"<<std::endl;
-	std::cout<<"TotalExpectationIsoTrack: "<<totalExpIsoTrack<<" +- " << sqrt(totalExpIsoTrackError)<<"\n TotalPredictionIsoTrack: "<<totalPreIsoTrackElec<<" +- "<<sqrt(totalPreIsoTrackElecError)<<std::endl;
-	std::cout<<"TotalExpectation: "<<totalExp<<" +- " << sqrt(totalExpError)<<"\n TotalPrediction: "<<totalPreElec<<" +- "<<sqrt(totalPreElecError)<<std::endl;	
-	std::cout<<"MuAccExp: "<<totalExpMuAcc<<"\n MuAccPre: "<<totalPreElecMuAcc<<std::endl;
-	std::cout<<"MuRecoExp: "<<totalExpMuReco<<"\n MuRecoPre: "<<totalPreElecMuReco<<std::endl;
-	std::cout<<"MuIsoExp: "<<totalExpMuIso<<"\n MuIsoPre: "<<totalPreElecMuIso<<std::endl;
-	std::cout<<"ElecAccExp: "<<totalExpElecAcc<<"\n ElecAccPre: "<<totalPreElecElecAcc<<std::endl;
-	std::cout<<"ElecRecoExp: "<<totalExpElecReco<<"\n ElecRecoPre: "<<totalPreElecElecReco<<std::endl;
-	std::cout<<"ElecIsoExp: "<<totalExpElecIso<<"\n ElecIsoPre: "<<totalPreElecElecIso<<std::endl;
-	std::cout<<"--------------------------------------------------------------------------------------------------------------------------\n";
+      ControlSampleMu_->Fill(Bin, scaledWeight/scaleMC);
+    			
+      totalPrediction_->Fill(Bin, totalWeightDiLep*scaleFactorWeight/2/scaleMC);
+      totalPre+=totalWeightDiLep*scaleFactorWeight/2/scaleMC;
+      totalPreError+= totalWeightDiLep*scaleFactorWeight/2*totalWeightDiLep*scaleFactorWeight/2/scaleMC/scaleMC;
+      totalPredictionMu_->Fill(Bin, totalWeightDiLep*scaleFactorWeight/scaleMC);
+      totalPreMu+=totalWeightDiLep*scaleFactorWeight/scaleMC;
+      totalPreMuError+= totalWeightDiLep*scaleFactorWeight*totalWeightDiLep*scaleFactorWeight/scaleMC/scaleMC;
+      // isotrackveto applied
+      totalPredictionIsoTrackReduction_->Fill(Bin, totalWeightDiLepIsoTrackReduced*scaleFactorWeight/2/scaleMC);
+      totalPreIsoTrack+=totalWeightDiLepIsoTrackReduced*scaleFactorWeight/2/scaleMC;
+      totalPreIsoTrackError+=totalWeightDiLepIsoTrackReduced*scaleFactorWeight/2*totalWeightDiLepIsoTrackReduced*scaleFactorWeight/2/scaleMC/scaleMC;
+      totalPredictionMuIsoTrackReduction_->Fill(Bin, totalWeightDiLepIsoTrackReduced*scaleFactorWeight/scaleMC);
+      totalPreIsoTrackMu+=totalWeightDiLepIsoTrackReduced*scaleFactorWeight/scaleMC;
+      totalPreIsoTrackMuError+=totalWeightDiLepIsoTrackReduced*scaleFactorWeight*totalWeightDiLepIsoTrackReduced*scaleFactorWeight/scaleMC/scaleMC;
+
+      // separted closure
+      totalPredictionMuCSMuAcc_->Fill(Bin, muAccWeight*scaleFactorWeight/scaleMC);
+      totalPredictionMuCSMuReco_->Fill(Bin, muRecoWeight*scaleFactorWeight/scaleMC);
+      totalPredictionMuCSMuIso_->Fill(Bin, muIsoWeight*scaleFactorWeight/scaleMC);
+      totalPreMuAcc+=muAccWeight*scaleFactorWeight/2/scaleMC;
+      totalPreMuReco+=muRecoWeight*scaleFactorWeight/2/scaleMC;
+      totalPreMuIso+=muIsoWeight*scaleFactorWeight/2/scaleMC;
+      totalPreMuMuAcc+=muAccWeight*scaleFactorWeight/scaleMC;
+      totalPreMuMuReco+=muRecoWeight*scaleFactorWeight/scaleMC;
+      totalPreMuMuIso+=muIsoWeight*scaleFactorWeight/scaleMC;
+    			
+      totalPredictionMuCSElecAcc_->Fill(Bin, elecAccWeight*scaleFactorWeight/scaleMC);
+      totalPredictionMuCSElecReco_->Fill(Bin, elecRecoWeight*scaleFactorWeight/scaleMC);
+      totalPredictionMuCSElecIso_->Fill(Bin, elecIsoWeight*scaleFactorWeight/scaleMC);
+      totalPreElecAcc+=elecAccWeight*scaleFactorWeight/2/scaleMC;
+      totalPreElecReco+=elecRecoWeight*scaleFactorWeight/2/scaleMC;
+      totalPreElecIso+=elecIsoWeight*scaleFactorWeight/2/scaleMC;
+      totalPreMuElecAcc+=elecAccWeight*scaleFactorWeight/scaleMC;
+      totalPreMuElecReco+=elecRecoWeight*scaleFactorWeight/scaleMC;
+      totalPreMuElecIso+=elecIsoWeight*scaleFactorWeight/scaleMC;
+    }
+    if(selectedIDIsoMuonsNum==0 && selectedIDIsoElectronsNum==1)
+      {
+    	ControlSampleElec_->Fill(Bin, scaledWeight/scaleMC);
+          
+	totalPrediction_->Fill(Bin, totalWeightDiLep*scaleFactorWeight/2/scaleMC);
+	totalPre+=totalWeightDiLep*scaleFactorWeight/2/scaleMC;
+	totalPreError+= totalWeightDiLep*scaleFactorWeight/2*totalWeightDiLep*scaleFactorWeight/2/scaleMC/scaleMC;
+	totalPredictionElec_->Fill(Bin, totalWeightDiLep*scaleFactorWeight/scaleMC);
+	totalPreElec+=totalWeightDiLep*scaleFactorWeight/scaleMC;
+	totalPreElecError+= totalWeightDiLep*scaleFactorWeight*totalWeightDiLep*scaleFactorWeight/scaleMC/scaleMC;
+	// isotrackveto applied
+	totalPredictionIsoTrackReduction_->Fill(Bin, totalWeightDiLepIsoTrackReduced*scaleFactorWeight/2/scaleMC);
+	totalPreIsoTrack+=totalWeightDiLepIsoTrackReduced*scaleFactorWeight/2/scaleMC;
+	totalPreIsoTrackError+=totalWeightDiLepIsoTrackReduced*scaleFactorWeight/2*totalWeightDiLepIsoTrackReduced*scaleFactorWeight/2/scaleMC/scaleMC;
+	totalPredictionElecIsoTrackReduction_->Fill(Bin, totalWeightDiLepIsoTrackReduced*scaleFactorWeight/scaleMC);
+	totalPreIsoTrackElec+=totalWeightDiLepIsoTrackReduced*scaleFactorWeight/scaleMC;
+	totalPreIsoTrackElecError+=totalWeightDiLepIsoTrackReduced*scaleFactorWeight*totalWeightDiLepIsoTrackReduced*scaleFactorWeight/scaleMC/scaleMC;
+
+	// separted closure
+	totalPredictionElecCSElecAcc_->Fill(Bin, elecAccWeight*scaleFactorWeight/scaleMC);
+	totalPredictionElecCSElecReco_->Fill(Bin, elecRecoWeight*scaleFactorWeight/scaleMC);
+	totalPredictionElecCSElecIso_->Fill(Bin, elecIsoWeight*scaleFactorWeight/scaleMC);
+	totalPreElecAcc+=elecAccWeight*scaleFactorWeight/2/scaleMC;
+	totalPreElecReco+=elecRecoWeight*scaleFactorWeight/2/scaleMC;
+	totalPreElecIso+=elecIsoWeight*scaleFactorWeight/2/scaleMC;
+	totalPreElecElecAcc+=elecAccWeight*scaleFactorWeight/scaleMC;
+	totalPreElecElecReco+=elecRecoWeight*scaleFactorWeight/scaleMC;
+	totalPreElecElecIso+=elecIsoWeight*scaleFactorWeight/scaleMC;
+          
+	totalPredictionElecCSMuAcc_->Fill(Bin, muAccWeight*scaleFactorWeight/scaleMC);
+	totalPredictionElecCSMuReco_->Fill(Bin, muRecoWeight*scaleFactorWeight/scaleMC);
+	totalPredictionElecCSMuIso_->Fill(Bin, muIsoWeight*scaleFactorWeight/scaleMC);
+	totalPreMuAcc+=muAccWeight*scaleFactorWeight/2/scaleMC;
+	totalPreMuReco+=muRecoWeight*scaleFactorWeight/2/scaleMC;
+	totalPreMuIso+=muIsoWeight*scaleFactorWeight/2/scaleMC;
+	totalPreElecMuAcc+=muAccWeight*scaleFactorWeight/scaleMC;
+	totalPreElecMuReco+=muRecoWeight*scaleFactorWeight/scaleMC;
+	totalPreElecMuIso+=muIsoWeight*scaleFactorWeight/scaleMC;
+      }
+  }
+
+  std::cout<<"Finished"<<std::endl;
 
 	
-	outPutFile->cd();
-	OutPutTreeExp_->Write();
-	OutPutTreePre_->Write();
-	FullClosure->Write();
-	FullClosureMu->Write();
-	FullClosureElec->Write();
-	outPutFile->mkdir("Closures");
-	TDirectory *dClosures = (TDirectory*)outPutFile->Get("Closures");
-
-	SaveClosure(totalPredictionMuCSMuAcc_->getFullTH1F(), totalExpectationMuAcc_->getFullTH1F(), dClosures);
-	SaveClosure(totalPredictionMuCSMuReco_->getFullTH1F(), totalExpectationMuReco_->getFullTH1F(), dClosures);
-	SaveClosure(totalPredictionMuCSMuIso_->getFullTH1F(), totalExpectationMuIso_->getFullTH1F(), dClosures);
+  TH1D* FullClosure = (TH1D*) totalExpectationIsoTrackReduction_->Clone();
+  FullClosure->Divide(totalPredictionIsoTrackReduction_,totalExpectationIsoTrackReduction_,1,1,"");
+  FullClosure->SetName("LostLeptonClosure");
+  FullClosure->SetTitle("Closure of lost-lepton method");
 	
-	SaveClosure(totalPredictionMuCSElecAcc_->getFullTH1F(), totalExpectationElecAcc_->getFullTH1F(), dClosures);
-	SaveClosure(totalPredictionMuCSElecReco_->getFullTH1F(), totalExpectationElecReco_->getFullTH1F(), dClosures);
-	SaveClosure(totalPredictionMuCSElecIso_->getFullTH1F(), totalExpectationElecIso_->getFullTH1F(), dClosures);
+  TH1D* FullClosureMu = (TH1D*) totalExpectationIsoTrackReduction_->Clone();
+  FullClosureMu->Divide(totalPredictionMuIsoTrackReduction_,totalExpectationIsoTrackReduction_,1,1,"");
+  FullClosureMu->SetName("LostLeptonClosureMuCS");
+  FullClosureMu->SetTitle("Closure of lost-lepton method #mu control-sample");
 	
-	SaveClosure(totalPredictionElecCSMuAcc_->getFullTH1F(), totalExpectationMuAcc_->getFullTH1F(), dClosures);
-	SaveClosure(totalPredictionElecCSMuReco_->getFullTH1F(), totalExpectationMuReco_->getFullTH1F(), dClosures);
-	SaveClosure(totalPredictionElecCSMuIso_->getFullTH1F(), totalExpectationMuIso_->getFullTH1F(), dClosures);
+  TH1D* FullClosureElec = (TH1D*) totalExpectationIsoTrackReduction_->Clone();
+  FullClosureElec->Divide(totalPredictionElecIsoTrackReduction_,totalExpectationIsoTrackReduction_,1,1,"");
+  FullClosureElec->SetName("LostLeptonClosureElecCS");
+  FullClosureElec->SetTitle("Closure of lost-lepton method elec control-sample");
+
+  TH1D* ClosureWoIsoTrack = (TH1D*) totalExpectation_->Clone();
+  ClosureWoIsoTrack->Divide(totalPrediction_,totalExpectation_,1,1,"");
+  ClosureWoIsoTrack->SetName("ClosureWoIsoTrack");
+  ClosureWoIsoTrack->SetTitle("Closure of lost-lepton method (wo IsotrackVeto)");
+  
+  TH1D* ClosureMuWoIsoTrack = (TH1D*) totalExpectation_->Clone();
+  ClosureMuWoIsoTrack->Divide(totalPredictionMu_,totalExpectation_,1,1,"");
+  ClosureMuWoIsoTrack->SetName("ClosureMuWoIsoTrack");
+  ClosureMuWoIsoTrack->SetTitle("Closure of lost-lepton method #mu control-sample (wo IsotrackVeto)");
+  
+  TH1D* ClosureElecWoIsoTrack = (TH1D*) totalExpectation_->Clone();
+  ClosureElecWoIsoTrack->Divide(totalPredictionElec_,totalExpectation_,1,1,"");
+  ClosureElecWoIsoTrack->SetName("ClosureElecWoIsoTrack");
+  ClosureElecWoIsoTrack->SetTitle("Closure of lost-lepton method elec control-sample (wo IsotrackVeto)");
+
+
+  std::cout<<"--------------------------------------------------------------------------------------------------------------------------\n";
+  std::cout<<"\n Muon and Electron CS:"<<std::endl;
+  std::cout<<"TotalExpectationIsoTrack: "<<totalExpIsoTrack<<" +- " << sqrt(totalExpIsoTrackError)<<"\n TotalPredictionIsoTrack: "<<totalPreIsoTrack<<" +- "<<sqrt(totalPreIsoTrackError)<<std::endl;
+  std::cout<<"TotalExpectation: "<<totalExp<<" +- " << sqrt(totalExpError)<<"\n TotalPrediction: "<<totalPre<<" +- "<<sqrt(totalPreError)<<std::endl;
+  std::cout<<"MuAccExp: "<<totalExpMuAcc<<"\n MuAccPre: "<<totalPreMuAcc<<std::endl;
+  std::cout<<"MuRecoExp: "<<totalExpMuReco<<"\n MuRecoPre: "<<totalPreMuReco<<std::endl;
+  std::cout<<"MuIsoExp: "<<totalExpMuIso<<"\n MuIsoPre: "<<totalPreMuIso<<std::endl;
+  std::cout<<"ElecAccExp: "<<totalExpElecAcc<<"\n ElecAccPre: "<<totalPreElecAcc<<std::endl;
+  std::cout<<"ElecRecoExp: "<<totalExpElecReco<<"\n ElecRecoPre: "<<totalPreElecReco<<std::endl;
+  std::cout<<"ElecIsoExp: "<<totalExpElecIso<<"\n ElecIsoPre: "<<totalPreElecIso<<std::endl;
+  std::cout<<"--------------------------------------------------------------------------------------------------------------------------\n";
+
+  std::cout<<"\n Muon CS only:"<<std::endl;
+  std::cout<<"TotalExpectationIsoTrack: "<<totalExpIsoTrack<<" +- " << sqrt(totalExpIsoTrackError)<<"\n TotalPredictionIsoTrack: "<<totalPreIsoTrackMu<<" +- "<<sqrt(totalPreIsoTrackMuError)<<std::endl;
+  std::cout<<"TotalExpectation: "<<totalExp<<" +- " << sqrt(totalExpError)<<"\n TotalPrediction: "<<totalPreMu<<" +- "<<sqrt(totalPreMuError)<<std::endl;	
+  std::cout<<"MuAccExp: "<<totalExpMuAcc<<"\n MuAccPre: "<<totalPreMuMuAcc<<std::endl;
+  std::cout<<"MuRecoExp: "<<totalExpMuReco<<"\n MuRecoPre: "<<totalPreMuMuReco<<std::endl;
+  std::cout<<"MuIsoExp: "<<totalExpMuIso<<"\n MuIsoPre: "<<totalPreMuMuIso<<std::endl;
+  std::cout<<"ElecAccExp: "<<totalExpElecAcc<<"\n ElecAccPre: "<<totalPreMuElecAcc<<std::endl;
+  std::cout<<"ElecRecoExp: "<<totalExpElecReco<<"\n ElecRecoPre: "<<totalPreMuElecReco<<std::endl;
+  std::cout<<"ElecIsoExp: "<<totalExpElecIso<<"\n ElecIsoPre: "<<totalPreMuElecIso<<std::endl;
+  std::cout<<"--------------------------------------------------------------------------------------------------------------------------\n";
+
+  std::cout<<"\n Elec CS only:"<<std::endl;
+  std::cout<<"TotalExpectationIsoTrack: "<<totalExpIsoTrack<<" +- " << sqrt(totalExpIsoTrackError)<<"\n TotalPredictionIsoTrack: "<<totalPreIsoTrackElec<<" +- "<<sqrt(totalPreIsoTrackElecError)<<std::endl;
+  std::cout<<"TotalExpectation: "<<totalExp<<" +- " << sqrt(totalExpError)<<"\n TotalPrediction: "<<totalPreElec<<" +- "<<sqrt(totalPreElecError)<<std::endl;	
+  std::cout<<"MuAccExp: "<<totalExpMuAcc<<"\n MuAccPre: "<<totalPreElecMuAcc<<std::endl;
+  std::cout<<"MuRecoExp: "<<totalExpMuReco<<"\n MuRecoPre: "<<totalPreElecMuReco<<std::endl;
+  std::cout<<"MuIsoExp: "<<totalExpMuIso<<"\n MuIsoPre: "<<totalPreElecMuIso<<std::endl;
+  std::cout<<"ElecAccExp: "<<totalExpElecAcc<<"\n ElecAccPre: "<<totalPreElecElecAcc<<std::endl;
+  std::cout<<"ElecRecoExp: "<<totalExpElecReco<<"\n ElecRecoPre: "<<totalPreElecElecReco<<std::endl;
+  std::cout<<"ElecIsoExp: "<<totalExpElecIso<<"\n ElecIsoPre: "<<totalPreElecElecIso<<std::endl;
+  std::cout<<"--------------------------------------------------------------------------------------------------------------------------\n";
+
 	
-	SaveClosure(totalPredictionElecCSElecAcc_->getFullTH1F(), totalExpectationElecAcc_->getFullTH1F(), dClosures);
-	SaveClosure(totalPredictionElecCSElecReco_->getFullTH1F(), totalExpectationElecReco_->getFullTH1F(), dClosures);
-	SaveClosure(totalPredictionElecCSElecIso_->getFullTH1F(), totalExpectationElecIso_->getFullTH1F(), dClosures);
+  outPutFile->cd();
+  FullClosure->Write();
+  FullClosureMu->Write();
+  FullClosureElec->Write();
+  ClosureWoIsoTrack->Write();
+  ClosureMuWoIsoTrack->Write();
+  ClosureElecWoIsoTrack->Write();
+  outPutFile->mkdir("Closures");
+  TDirectory *dClosures = (TDirectory*)outPutFile->Get("Closures");
+
+  SaveClosure(totalPredictionMuCSMuAcc_, totalExpectationMuAcc_, dClosures);
+  SaveClosure(totalPredictionMuCSMuReco_, totalExpectationMuReco_, dClosures);
+  SaveClosure(totalPredictionMuCSMuIso_, totalExpectationMuIso_, dClosures);
 	
-	SaveClosure(totalPredictionIsoTrackReduction_->getFullTH1F(), totalExpectationIsoTrackReduction_->getFullTH1F(), dClosures);
-	SaveClosure(totalPredictionMuIsoTrackReduction_->getFullTH1F(), totalExpectationIsoTrackReduction_->getFullTH1F(), dClosures);
-	SaveClosure(totalPredictionElecIsoTrackReduction_->getFullTH1F(), totalExpectationIsoTrackReduction_->getFullTH1F(), dClosures);
+  SaveClosure(totalPredictionMuCSElecAcc_, totalExpectationElecAcc_, dClosures);
+  SaveClosure(totalPredictionMuCSElecReco_, totalExpectationElecReco_, dClosures);
+  SaveClosure(totalPredictionMuCSElecIso_, totalExpectationElecIso_, dClosures);
 	
-	outPutFile->mkdir("Expectation");
-	TDirectory *dExpectation = (TDirectory*)outPutFile->Get("Expectation");
-	dExpectation->cd();
-	totalExpectation_->saveResults(dExpectation);
-	outPutFile->mkdir("Prediction");
-	TDirectory *dPrediction = (TDirectory*)outPutFile->Get("Prediction");
-	dPrediction->cd();
-	totalPrediction_->saveResults(dPrediction);
-	totalPredictionMu_->saveResults(dPrediction);
-	totalPredictionElec_->saveResults(dPrediction);
+  SaveClosure(totalPredictionElecCSMuAcc_, totalExpectationMuAcc_, dClosures);
+  SaveClosure(totalPredictionElecCSMuReco_, totalExpectationMuReco_, dClosures);
+  SaveClosure(totalPredictionElecCSMuIso_, totalExpectationMuIso_, dClosures);
 	
-	outPutFile->mkdir("ControlSample");
-	TDirectory *dControlSample = (TDirectory*)outPutFile->Get("ControlSample");
-	SaveClosure(ControlSampleElec_->getFullTH1F(), ControlSampleMu_->getFullTH1F(), dControlSample);
-	dControlSample->cd();
-	ControlSampleMu_->saveResults(dControlSample);
-	ControlSampleElec_->saveResults(dControlSample);
+  SaveClosure(totalPredictionElecCSElecAcc_, totalExpectationElecAcc_, dClosures);
+  SaveClosure(totalPredictionElecCSElecReco_, totalExpectationElecReco_, dClosures);
+  SaveClosure(totalPredictionElecCSElecIso_, totalExpectationElecIso_, dClosures);
 	
-	TH1F* h_exp = (TH1F*) totalExpectationIsoTrackReduction_->getFullTH1F();
-	TH1F* h_pred = (TH1F*) totalPredictionIsoTrackReduction_->getFullTH1F();
-	TH1F* h_pred_mu = (TH1F*) totalPredictionMuIsoTrackReduction_->getFullTH1F();
-	TH1F* h_pred_elec = (TH1F*) totalPredictionElecIsoTrackReduction_->getFullTH1F();
+  SaveClosure(totalPredictionIsoTrackReduction_, totalExpectationIsoTrackReduction_, dClosures);
+  SaveClosure(totalPredictionMuIsoTrackReduction_, totalExpectationIsoTrackReduction_, dClosures);
+  SaveClosure(totalPredictionElecIsoTrackReduction_, totalExpectationIsoTrackReduction_, dClosures);
 	
-
-	TH1F* h_cs_mu = (TH1F*) ControlSampleMu_->getFullTH1F();
-	TH1F* h_cs_elec = (TH1F*) ControlSampleElec_->getFullTH1F();
-
-	TH1F* fullPred_LL_ = new TH1F("fullPred_LL","fullPred_LL", 220, 1, 221);
-	TH1F* fullPredSysUp_LL_ = new TH1F("fullPredSysUp_LL","fullPredSysUp_LL", 220, 1, 221);
-	TH1F* fullPredSysDown_LL_ = new TH1F("fullPredSysDown_LL","fullPredSysDown_LL", 220, 1, 221);
-	TH1F* fullCS_LL_ = new TH1F("fullCS_LL","fullCS_LL", 220, 1, 221);
-	TH1F* fullWeight_LL_ = new TH1F("fullWeight_LL","fullWeight_LL", 220, 1, 221);
-	TH1F* fullWeightSysUp_LL_ = new TH1F("fullWeightSysUp_LL","fullWeightSysUp_LL", 220, 1, 221);
-	TH1F* fullWeightSysDown_LL_ = new TH1F("fullWeightSysDown_LL","fullWeightSysDown_LL", 220, 1, 221);
-
-	for(int i = 1; i<h_pred->GetNbinsX()+1; ++i){
-		double N_predicted = h_pred->GetBinContent(i);
-		double N_expected = h_exp->GetBinContent(i);
-
-		double weight_mu = MuMeanWeight_->GetBinContent(i+1);
-		double weight_elec = ElecMeanWeight_->GetBinContent(i+1);		
-
-		double weight_mu_err = MuMeanWeight_->GetBinError(i+1);
-		double weight_elec_err = ElecMeanWeight_->GetBinError(i+1);
-
-		double weight_combined = CombinedMeanWeight_->GetBinContent(i+1);
-		double weight_combined_err = CombinedMeanWeight_->GetBinError(i+1);
-
-		double N_cs_mu = h_cs_mu->GetBinContent(i);
-		double N_cs_elec = h_cs_elec->GetBinContent(i);
-		double Err_cs_mu = sqrt(N_cs_mu);
-		double Err_cs_elec = sqrt(N_cs_elec);
-/*
-		if(CombinedWeightDiLepPerBin_[i-1]->GetEntries()<0.5 && i > 37){
-			weight_combined = CombinedMeanWeight_->GetBinContent(i+1-18);
-			weight_combined_err = CombinedMeanWeight_->GetBinError(i+1-18);
-			fullWeightSysUp_LL_->SetBinContent(i,weight_combined*0.2);
-			fullWeightSysDown_LL_->SetBinContent(i,weight_combined*0.2);
-			if(i > 55 && CombinedWeightDiLepPerBin_[i-1-18]->GetEntries()<0.5){
-				weight_combined = CombinedMeanWeight_->GetBinContent(i+1-18);
-				weight_combined_err = CombinedMeanWeight_->GetBinError(i+1-18);
-				fullWeightSysUp_LL_->SetBinContent(i,weight_combined*0.3);
-				fullWeightSysDown_LL_->SetBinContent(i,weight_combined*0.3);
-			}
-		}else{
-			fullWeightSysUp_LL_->SetBinContent(i,0);
-			fullWeightSysDown_LL_->SetBinContent(i,0);
-		}
+  outPutFile->mkdir("Expectation");
+  TDirectory *dExpectation = (TDirectory*)outPutFile->Get("Expectation");
+  dExpectation->cd();
+  totalExpectation_->Write();
+  outPutFile->mkdir("Prediction");
+  TDirectory *dPrediction = (TDirectory*)outPutFile->Get("Prediction");
+  dPrediction->cd();
+  totalPrediction_->Write();
+  totalPredictionMu_->Write();
+  totalPredictionElec_->Write();
+	
+  outPutFile->mkdir("ControlSample");
+  TDirectory *dControlSample = (TDirectory*)outPutFile->Get("ControlSample");
+  SaveClosure(ControlSampleElec_, ControlSampleMu_, dControlSample);
+  dControlSample->cd();
+  ControlSampleMu_->Write();
+  ControlSampleElec_->Write();
 
 
-		if(CombinedWeightDiLepPerBin_[i-1]->GetEntries()<0.5 && i > 56){
-			weight_combined = fullWeight_LL_->GetBinContent(i+1-55);
-			weight_combined_err = fullWeight_LL_->GetBinError(i+1-55);
-			fullWeightSysUp_LL_->SetBinContent(i,weight_combined*0.2);
-			fullWeightSysDown_LL_->SetBinContent(i,weight_combined*0.2);
-			if(CombinedWeightDiLepPerBin_[i-1-55]->GetEntries()<0.5 && i > 111){
-				weight_combined = fullWeight_LL_->GetBinContent(i+1-110);
-				weight_combined_err = fullWeight_LL_->GetBinError(i+1-110);
-				fullWeightSysUp_LL_->SetBinContent(i,weight_combined*0.3);
-				fullWeightSysDown_LL_->SetBinContent(i,weight_combined*0.3);
-				if(CombinedWeightDiLepPerBin_[i-1-110]->GetEntries()<0.5 && i > 166){
-					weight_combined = fullWeight_LL_->GetBinContent(i+1-165);
-					weight_combined_err = fullWeight_LL_->GetBinError(i+1-165);
-					fullWeightSysUp_LL_->SetBinContent(i,weight_combined*0.5);
-					fullWeightSysDown_LL_->SetBinContent(i,weight_combined*0.5);
-				}
-			}
-		}else{
-			fullWeightSysUp_LL_->SetBinContent(i,0);
-			fullWeightSysDown_LL_->SetBinContent(i,0);
-		}
-		if(weight_combined<0.01 && i < 220){
-				weight_combined = CombinedMeanWeight_->GetBinContent(i+1+1);
-				weight_combined_err = CombinedMeanWeight_->GetBinError(i+1+1);
-				fullWeightSysUp_LL_->SetBinContent(i,weight_combined*0.3);
-				fullWeightSysDown_LL_->SetBinContent(i,weight_combined*0.3);
-		}
-*/
-		//std::cout<<weight_combined<<"; "<<CombinedWeightDiLepPerBin_[i-1]->GetMean()<<std::endl;
-/*
-		if(weight_mu < 0.1){
-			if(i > 19) weight_mu = MuMeanWeight_->GetBinContent(i-18);
-			else std::cout<<"Mu: Error using weight from lower N_BJets"<<std::endl;
-			if(weight_mu < 0.1){
-				if(i > 37) weight_mu = MuMeanWeight_->GetBinContent(i-18);
-				else std::cout<<"Mu: Error using weight from 2xlower N_BJets"<<std::endl;
-			}
-			if(weight_mu < 0.1) weight_mu = 0.1;
-		}
+  SearchBins *SearchBins_ = new SearchBins();
 
-		if(N_cs_mu < 1.0){
-			Err_cs_mu = 1.84;
-		}
+  double LLexpErr = 0;
+  double LLexp = totalExp_LL_->IntegralAndError(1, 72, LLexpErr);
+  double LLpreErr = 0;
+  double LLpre = totalPred_LL_->IntegralAndError(1, 72, LLpreErr);
 
-		double Err_pred_mu = Err_cs_mu * weight_mu;
+  //printf("Total: & & & & & & & $%3.3f\\pm$%3.3f & $%3.3f\\pm$%3.3f \\\\\n", LLexp, LLexpErr, LLpre, LLpreErr);
 
+  if(InputPath_Prediction_Data == InputPath_Prediction) std::cout<<"ATTENTION: Full MC statistics used to do prediction! Only approx. stat. unc. (~sqrt(n)) shown on prediction!"<<std::endl;
 
-		if(weight_elec < 0.1){
-			if(i > 19) weight_elec = ElecMeanWeight_->GetBinContent(i-18);
-			else std::cout<<"El: Error using weight from lower N_BJets"<<std::endl;
-			if(weight_elec < 0.1){
-				if(i > 37) weight_elec = ElecMeanWeight_->GetBinContent(i-18);
-				else std::cout<<"El: Error using weight from 2xlower N_BJets"<<std::endl;
-			}
-			if(weight_elec < 0.1) weight_elec = 0.1;
-		}
+  printf("Bin & NJets & BTags & HT & MHT & CS\\_MC (nEntries) & avg. weight (MC) [$\\pm$ stat. $\\pm$ statEff. $\\pm$ sysEff.] & CS\\_data & avg. weight (data) [$\\pm$ stat. $\\pm$ statEff. $\\pm$ sysEff.] & Prediction [$\\pm$ stat. $\\pm$ statEff. $\\pm$ sysEff.] & Expectation \\\\\n");
 
-		if(N_cs_elec < 1.0){
-			Err_cs_elec = 1.84;
-		}
+  for(int i = 1; i<totalPred_LL_->GetNbinsX()+1; ++i){
 
-		double Err_pred_elec = Err_cs_elec * weight_elec;
+    //SearchBin (Number, NJets, BTags, HT, MHT)
+    printf("%1.0i & ", i);
 
+    if(SearchBins_->GetSearchBin(i-1)->NJetsmin_<SearchBins_->GetSearchBin(i-1)->NJetsmax_ && SearchBins_->GetSearchBin(i-1)->NJetsmin_>=0){
+      printf("%d-", SearchBins_->GetSearchBin(i-1)->NJetsmin_);
+      if(SearchBins_->GetSearchBin(i-1)->NJetsmax_<9999) printf("%d & ", SearchBins_->GetSearchBin(i-1)->NJetsmax_);
+      else printf("Inf & ");
+    }else{
+      printf("%d & ", SearchBins_->GetSearchBin(i-1)->NJetsmax_);
+    }
 
-		double Err_pred_ges = (Err_pred_mu + Err_pred_elec) / 2;
-*/
-		/*std::cout<<"Bin["<<i<<"]:"<<std::endl;
-		std::cout<<"   HT: "<<SearchBins_->GetSearchBin(i-1)->HTmin_<<"-"<<SearchBins_->GetSearchBin(i-1)->HTmax_;
-		std::cout<<"   MHT: "<<SearchBins_->GetSearchBin(i-1)->MHTmin_<<"-"<<SearchBins_->GetSearchBin(i-1)->MHTmax_;
-		std::cout<<"   NJets: "<<SearchBins_->GetSearchBin(i-1)->NJetsmin_<<"-"<<SearchBins_->GetSearchBin(i-1)->NJetsmax_;
-		std::cout<<"   BTags: "<<SearchBins_->GetSearchBin(i-1)->BTagsmin_<<"-"<<SearchBins_->GetSearchBin(i-1)->BTagsmax_;
-		std::cout<<std::endl;
-		std::cout<<"   "<<N_predicted<<"+-"<<sqrt(Err_pred_ges*Err_pred_ges+0.4*0.4*N_predicted*N_predicted)<<std::endl;
-*/
-		std::cout.unsetf ( std::ios::floatfield );
-  		std::cout.precision(5);
-		//std::cout<<i<<" & ";
+    if(SearchBins_->GetSearchBin(i-1)->BTagsmin_<SearchBins_->GetSearchBin(i-1)->BTagsmax_ && SearchBins_->GetSearchBin(i-1)->BTagsmin_>=0){
+      printf("%d-",SearchBins_->GetSearchBin(i-1)->BTagsmin_);
+      if(SearchBins_->GetSearchBin(i-1)->BTagsmax_<9999) printf("%d & ",SearchBins_->GetSearchBin(i-1)->BTagsmax_);
+      else printf("Inf & ");
+    }else{
+      printf("%d & ", SearchBins_->GetSearchBin(i-1)->BTagsmax_);
+    }
 
-		if(SearchBins_->GetSearchBin(i-1)->NJetsmin_<SearchBins_->GetSearchBin(i-1)->NJetsmax_ && SearchBins_->GetSearchBin(i-1)->NJetsmin_>=0){
-			std::cout<<SearchBins_->GetSearchBin(i-1)->NJetsmin_<<"-";
-			if(SearchBins_->GetSearchBin(i-1)->NJetsmax_<9999) std::cout<<SearchBins_->GetSearchBin(i-1)->NJetsmax_<<" & ";
-			else std::cout<<"Inf"<<" & ";
-		}else{
-			std::cout<<SearchBins_->GetSearchBin(i-1)->NJetsmax_<<" & ";
-		}
+    printf("%3.0f-",SearchBins_->GetSearchBin(i-1)->HTmin_);
+    if(SearchBins_->GetSearchBin(i-1)->HTmax_<9999) printf("%3.0f & ",SearchBins_->GetSearchBin(i-1)->HTmax_);
+    else printf("Inf & ");
 
-		if(SearchBins_->GetSearchBin(i-1)->BTagsmin_<SearchBins_->GetSearchBin(i-1)->BTagsmax_ && SearchBins_->GetSearchBin(i-1)->BTagsmin_>=0){
-			if(SearchBins_->GetSearchBin(i-1)->BTagsmax_>=0) std::cout<<SearchBins_->GetSearchBin(i-1)->BTagsmin_<<"-";
-			else std::cout<<"0"<<"-";
-			if(SearchBins_->GetSearchBin(i-1)->BTagsmax_<9999) std::cout<<SearchBins_->GetSearchBin(i-1)->BTagsmax_<<" & ";
-			else std::cout<<"Inf"<<" & ";
-		}else{
-			std::cout<<SearchBins_->GetSearchBin(i-1)->BTagsmax_<<" & ";
-		}
+    printf("%3.0f-",SearchBins_->GetSearchBin(i-1)->MHTmin_);
+    if(SearchBins_->GetSearchBin(i-1)->MHTmax_<9999) printf("%3.0f & ",SearchBins_->GetSearchBin(i-1)->MHTmax_);
+    else printf("Inf & ");
 
-		std::cout<<SearchBins_->GetSearchBin(i-1)->HTmin_<<"-";
-		if(SearchBins_->GetSearchBin(i-1)->HTmax_<9999) std::cout<<SearchBins_->GetSearchBin(i-1)->HTmax_<<" & ";
-		else std::cout<<"Inf"<<" & ";
+    // CS events (MC)
+    printf("%3.3f (%1.0f) & ", totalCS_LL_MC_->GetBinContent(i), nEvtsCS_LL_MC_->GetBinContent(i));
+ 
+    // Average weight per Bin (MC)
+    printf("$%3.3f\\pm%3.3f^{+%3.3f}_{-%3.3f}{}^{+%3.3f}_{-%3.3f}$ & ", avgWeight_LL_MC_->GetBinContent(i), avgWeight_LL_MC_->GetBinError(i), avgWeightStatUp_LL_MC_->GetBinContent(i), avgWeightStatDown_LL_MC_->GetBinContent(i), avgWeightSysUp_LL_MC_->GetBinContent(i), avgWeightSysDown_LL_MC_->GetBinContent(i));
+    
+    // CS events (data)
+    printf("%1.0f & ", totalCS_LL_->GetBinContent(i));
 
-		std::cout<<SearchBins_->GetSearchBin(i-1)->MHTmin_<<"-";
-		if(SearchBins_->GetSearchBin(i-1)->MHTmax_<9999) std::cout<<SearchBins_->GetSearchBin(i-1)->MHTmax_<<" & ";
-		else std::cout<<"Inf"<<" & ";
+    // Average weight per Bin (data)
+    printf("$%3.3f\\pm%3.3f^{+%3.3f}_{-%3.3f}{}^{+%3.3f}_{-%3.3f}$ & ", avgWeight_LL_->GetBinContent(i), avgWeight_LL_->GetBinError(i), avgWeightStatUp_LL_->GetBinContent(i), avgWeightStatDown_LL_->GetBinContent(i), avgWeightSysUp_LL_->GetBinContent(i), avgWeightSysDown_LL_->GetBinContent(i));
 
-		std::cout<<0.1*((int)((N_cs_mu+N_cs_elec)*10))<<" & ";//<<" ("<<CombinedWeightDiLepPerBin_[i-1]->GetEntries()<<") & ";
+    // Prediction
+    // Correct estimate of stat. uncertainty on prediction only possible if data is used or limited MC statistics (e.g. number of events corresponding to 3fb-1)
+    // For approximation of stat. uncertainty on prediction using full MC statistics use:
+    if(InputPath_Prediction_Data == InputPath_Prediction) if(totalCS_LL_->GetBinContent(i)>0.00001) totalPred_LL_->SetBinError(i, sqrt(totalPred_LL_->GetBinContent(i)*totalPred_LL_->GetBinContent(i)/totalCS_LL_->GetBinContent(i)));
 
-		std::cout.precision(3);
-		std::cout<<"$"<<weight_combined<<"\\pm"<<0.001*((int)(weight_combined_err*1000))<<"^{+"<<fullWeightSysUp_LL_->GetBinContent(i)<<"}_{-"<<fullWeightSysDown_LL_->GetBinContent(i)<<"}$ & ";
-		std::cout.precision(5);
- //		std::cout<<CombinedWeightDiLepPerBin_[i-1]->GetRMS()<<" ("<<CombinedWeightDiLepPerBin_[i-1]->GetBinCenter(CombinedWeightDiLepPerBin_[i-1]->FindFirstBinAbove())<<"/"<<CombinedWeightDiLepPerBin_[i-1]->GetBinCenter(CombinedWeightDiLepPerBin_[i-1]->FindLastBinAbove())<<") & ";
-//		std::cout<<N_predicted<<"+-"<<sqrt(Err_pred_ges*Err_pred_ges+0.4*0.4*N_predicted*N_predicted)<<" \\\\"<<std::endl;
-	if(N_predicted>0.00001)	std::cout<<"$"<<0.1*((int)(N_predicted*10))<<"\\pm"<<0.1*((int)(sqrt(N_predicted*N_predicted/(N_cs_mu+N_cs_elec))*10))<<"^{+"<<0.1*((int)(0.3*N_predicted*10))<<"}_{-"<<0.1*((int)(0.3*N_predicted*10))<<"}$ \\\\"<<std::endl;
-	else	std::cout<<"$"<<0<<"\\pm"<<0<<"^{+"<<0<<"}_{-"<<0<<"}$ \\\\"<<std::endl;
+    printf("$%3.3f\\pm%3.3f^{+%3.3f}_{-%3.3f}{}^{+%3.3f}_{-%3.3f}$ & ", totalPred_LL_->GetBinContent(i), totalPred_LL_->GetBinError(i), totalPredStatUp_LL_->GetBinContent(i), totalPredStatDown_LL_->GetBinContent(i), totalPredSysUp_LL_->GetBinContent(i), totalPredSysDown_LL_->GetBinContent(i));
 
-		fullCS_LL_->SetBinContent(i,N_cs_mu+N_cs_elec);
+    // Expectation
+    printf("$%3.3f\\pm%3.3f$ \\\\\n", totalExp_LL_->GetBinContent(i), totalExp_LL_->GetBinError(i));
 
-		fullWeight_LL_->SetBinContent(i,weight_combined);
-		fullWeight_LL_->SetBinError(i,weight_combined_err);
-
-		fullPred_LL_->SetBinContent(i,N_predicted);
-		if((N_cs_mu+N_cs_elec)>0) fullPred_LL_->SetBinError(i,sqrt(N_predicted*N_predicted/(N_cs_mu+N_cs_elec)));
-		if((N_cs_mu+N_cs_elec)>0) fullPredSysUp_LL_->SetBinContent(i,0.3*N_predicted);
-		if((N_cs_mu+N_cs_elec)>0) fullPredSysDown_LL_->SetBinContent(i,0.3*N_predicted);
-
-		//std::cout<<"Bin["<<i<<"]: "<<N_predicted<<"+-"<<Err_pred_ges<<std::endl;
-		//std::cout<<"Bin["<<i<<"]: "<<N_predicted<<"+-"<<sqrt(Err_pred_ges*Err_pred_ges+0.4*0.4*N_predicted*N_predicted)<<std::endl;
-	}
+  }
 
 
+  TFile *LLoutPutFile = new TFile(OutputPath_Prediction,"RECREATE");
 
+  LLoutPutFile->cd();
+  LLoutPutFile->mkdir("Expectation");
+  TDirectory *dExp = (TDirectory*)LLoutPutFile->Get("Expectation");
+  dExp->cd();
 
-/*		std::cout<<"Baseline & & & & "<<totalExpIsoTrack<<"$\\pm$"<<sqrt(totalExpIsoTrackError)<<" & "<<totalPreElec/2<<"$\\pm$"<<sqrt(totalPreElecError)/2<<" & "<<totalPreMu/2<<"$\\pm$"<<sqrt(totalPreMuError)/2<<" & "<<totalPre/2<<"$\\pm$"<<sqrt(totalPreError)/2<<" \\\\ "<<std::endl;
+  totalExp_LL_->Write();
 
-	for(int i = 1; i<h_pred->GetNbinsX()+1; ++i){
-		if(SearchBins_->GetSearchBin(i-1)->NJetsmin_<SearchBins_->GetSearchBin(i-1)->NJetsmax_ && SearchBins_->GetSearchBin(i-1)->NJetsmin_>=0){
-			std::cout<<SearchBins_->GetSearchBin(i-1)->NJetsmin_<<"-";
-			if(SearchBins_->GetSearchBin(i-1)->NJetsmax_<9999) std::cout<<SearchBins_->GetSearchBin(i-1)->NJetsmax_<<" & ";
-			else std::cout<<"Inf"<<" & ";
-		}else{
-			std::cout<<SearchBins_->GetSearchBin(i-1)->NJetsmax_<<" & ";
-		}
+  LLoutPutFile->cd();
+  LLoutPutFile->mkdir("Prediction_data");
+  TDirectory *dPreData = (TDirectory*)LLoutPutFile->Get("Prediction_data");
+  dPreData->cd();
 
-		if(SearchBins_->GetSearchBin(i-1)->BTagsmin_<SearchBins_->GetSearchBin(i-1)->BTagsmax_ && SearchBins_->GetSearchBin(i-1)->BTagsmin_>=0){
-			if(SearchBins_->GetSearchBin(i-1)->BTagsmax_>=0) std::cout<<SearchBins_->GetSearchBin(i-1)->BTagsmin_<<"-";
-			else std::cout<<"0"<<"-";
-			if(SearchBins_->GetSearchBin(i-1)->BTagsmax_<9999) std::cout<<SearchBins_->GetSearchBin(i-1)->BTagsmax_<<" & ";
-			else std::cout<<"Inf"<<" & ";
-		}else{
-			std::cout<<SearchBins_->GetSearchBin(i-1)->BTagsmax_<<" & ";
-		}
+  totalPred_LL_->Write();
+  totalPredStatUp_LL_->Write();
+  totalPredStatDown_LL_->Write();
+  totalPredSysUp_LL_->Write();
+  totalPredSysDown_LL_->Write();
 
-		std::cout<<SearchBins_->GetSearchBin(i-1)->HTmin_<<"-";
-		if(SearchBins_->GetSearchBin(i-1)->HTmax_<9999) std::cout<<SearchBins_->GetSearchBin(i-1)->HTmax_<<" & ";
-		else std::cout<<"Inf"<<" & ";
+  totalCS_LL_->Write();
+  nEvtsCS_LL_->Write();
 
-		std::cout<<SearchBins_->GetSearchBin(i-1)->MHTmin_<<"-";
-		if(SearchBins_->GetSearchBin(i-1)->MHTmax_<9999) std::cout<<SearchBins_->GetSearchBin(i-1)->MHTmax_<<" & ";
-		else std::cout<<"Inf"<<" & ";
+  avgWeight_LL_->Write();
+  avgWeightStatUp_LL_->Write();
+  avgWeightStatDown_LL_->Write();  
+  avgWeightSysUp_LL_->Write();
+  avgWeightSysDown_LL_->Write();
 
-		std::cout<<h_exp->GetBinContent(i)<<"$\\pm$"<<h_exp->GetBinError(i)<<" & ";
-		std::cout<<h_pred_elec->GetBinContent(i)/2<<"$\\pm$"<<h_pred_elec->GetBinError(i)/2<<" & ";
-		std::cout<<h_pred_mu->GetBinContent(i)/2<<"$\\pm$"<<h_pred_mu->GetBinError(i)/2<<" & ";
-		std::cout<<h_pred->GetBinContent(i)<<"$\\pm$"<<h_pred->GetBinError(i)<<" \\\\ "<<std::endl;
-	}
-*/
+  LLoutPutFile->cd();
+  LLoutPutFile->mkdir("Prediction_MC");
+  TDirectory *dPreMC = (TDirectory*)LLoutPutFile->Get("Prediction_MC");
+  dPreMC->cd();
 
-	TFile *LLoutPutFile = new TFile("LLPrediction.root","RECREATE"); 
-	LLoutPutFile->cd();
-	fullPred_LL_->Write();
-	fullCS_LL_->Write();
-	fullWeight_LL_->Write();
-	fullPredSysUp_LL_->Write();
-	fullPredSysDown_LL_->Write();
-	fullWeightSysUp_LL_->Write();
-	fullWeightSysDown_LL_->Write();
-	LLoutPutFile->Close();
+  avgWeight_LL_->Write();
+  avgWeightStatUp_LL_->Write();
+  avgWeightStatDown_LL_->Write();  
+  avgWeightSysUp_LL_->Write();
+  avgWeightSysDown_LL_->Write();
+
+  totalPred_LL_MC_->Write();
+  totalPredStatUp_LL_MC_->Write();
+  totalPredStatDown_LL_MC_->Write();
+  totalPredSysUp_LL_MC_->Write();
+  totalPredSysDown_LL_MC_->Write();
+
+  totalCS_LL_MC_->Write();
+  nEvtsCS_LL_MC_->Write();
+
+  avgWeight_LL_MC_->Write();
+  avgWeightStatUp_LL_MC_->Write();
+  avgWeightStatDown_LL_MC_->Write();  
+  avgWeightSysUp_LL_MC_->Write();
+  avgWeightSysDown_LL_MC_->Write();
+
+  LLoutPutFile->Close();
 	
 }
